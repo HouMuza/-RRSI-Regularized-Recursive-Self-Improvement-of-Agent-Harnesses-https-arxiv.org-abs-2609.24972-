@@ -18,12 +18,15 @@ import json
 import os
 import platform
 import random
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import torch
+import mlflow
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -150,7 +153,13 @@ def summarize_splits(splits: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     return summary
 
 
-def build_responses(rows: list[dict[str, Any]], config: dict[str, Any], output_path: Path, progress_path: Path) -> list[dict[str, Any]]:
+def build_responses(
+    rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    output_path: Path,
+    progress_path: Path,
+    on_progress=None,
+) -> list[dict[str, Any]]:
     """Run deterministic greedy generation and persist every raw response."""
     model_config = config["model"]
     model_path = Path(model_config["path"]).expanduser()
@@ -281,6 +290,11 @@ def build_responses(rows: list[dict[str, Any]], config: dict[str, Any], output_p
             with progress_path.with_name("progress.jsonl").open("a") as event_log:
                 event_log.write(json.dumps(progress, sort_keys=True) + "\n")
                 event_log.flush()
+            # The callback mirrors the canonical JSON progress into optional
+            # experiment trackers. A tracker failure must not corrupt or stop
+            # the scientific run, so callbacks handle their own exceptions.
+            if on_progress is not None:
+                on_progress(progress)
             print(
                 f"[{len(records):>3}/{len(rows)} {progress['percent']:5.1f}%] "
                 f"strict={live['strict_prompt_accuracy']:.3f} "
@@ -367,8 +381,68 @@ def score_split(rows: list[dict[str, Any]], responses: list[dict[str, Any]], out
     return score_details
 
 
+def git_commit() -> str | None:
+    """Return the exact source revision without failing outside a git checkout."""
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def start_mlflow_run(run_dir: Path, run_id: str, config: dict[str, Any], environment: dict[str, Any]):
+    """Create or resume the local MLflow ledger entry for this A0 run."""
+    database = ROOT / "runs/a0/mlflow.db"
+    tracking_uri = f"sqlite:///{database.as_posix()}"
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("rrsi-a0")
+    ledger_path = run_dir / "mlflow.json"
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+    if ledger.get("run_id"):
+        active = mlflow.start_run(run_id=ledger["run_id"])
+    else:
+        active = mlflow.start_run(
+            run_name=run_id,
+            tags={
+                "rrsi.phase": "a0",
+                "rrsi.local_run_id": run_id,
+                "rrsi.git_commit": environment.get("git_commit") or "unknown",
+            },
+        )
+        write_json(ledger_path, {
+            "run_id": active.info.run_id,
+            "experiment_id": active.info.experiment_id,
+            "tracking_uri": tracking_uri,
+        })
+    mlflow.log_params({
+        "model": config["model"]["name"],
+        "model_revision": config["model"]["revision"],
+        "dataset": config["benchmark"]["name"],
+        "dataset_revision": config["benchmark"]["dataset_revision"],
+        "evaluator_revision": config["evaluator"]["revision"],
+        "split_seed": config["split"]["seed"],
+        "max_new_tokens": config["model"]["max_new_tokens"],
+        "do_sample": config["model"]["do_sample"],
+        "device": environment["selected_device"],
+    })
+    return active
+
+
+def stop_signal_handler(_signum, _frame) -> None:
+    """Raise an interrupt so lifecycle and tracker cleanup execute normally."""
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     """Parse the CLI, freeze a run manifest, and execute requested split(s)."""
+    # Convert a dashboard stop request into normal Python unwinding so the
+    # lifecycle and MLflow records are finalized before the process exits.
+    signal.signal(signal.SIGTERM, stop_signal_handler)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--splits", nargs="+", choices=("evolution", "validation", "heldout_test"), default=["evolution", "validation", "heldout_test"])
@@ -426,7 +500,7 @@ def main() -> None:
         "torch": torch.__version__,
         "mps_available": torch.backends.mps.is_available(),
         "selected_device": "mps" if torch.backends.mps.is_available() else "cpu",
-        "selected_device": "mps" if torch.backends.mps.is_available() else "cpu",
+        "git_commit": git_commit(),
         "packages": {name: importlib.metadata.version(name) for name in ("transformers", "tokenizers", "accelerate", "absl-py", "langdetect", "nltk", "immutabledict")},
         "evaluator_revision": config["evaluator"]["revision"],
         "model_revision": config["model"]["revision"],
@@ -436,20 +510,93 @@ def main() -> None:
     }
     write_json(run_dir / "environment.json", environment)
 
+    # MLflow is the standard searchable ledger. The JSON and JSONL files stay
+    # canonical because they are simple to audit and do not depend on a server.
+    start_mlflow_run(run_dir, run_id, config, environment)
     all_scores = {}
-    for split_name in args.splits:
-        split_rows = splits[split_name]
-        split_dir = run_dir / split_name
-        response_path = split_dir / "raw_responses.jsonl"
-        records = build_responses(split_rows, config, response_path, split_dir / "progress.json")
-        all_scores[split_name] = score_split(split_rows, records, split_dir, evaluator_dir)
-        write_json(split_dir / "metrics.json", all_scores[split_name])
-        # Keep the held-out run unmistakably separate in the evidence tree.
-        if split_name == "heldout_test":
-            os.chmod(split_dir, 0o700)
+    try:
+        for split_name in args.splits:
+            split_rows = splits[split_name]
+            split_dir = run_dir / split_name
+            split_dir.mkdir(parents=True, exist_ok=True)
+            lifecycle_path = split_dir / "lifecycle.json"
+            write_json(lifecycle_path, {
+                "status": "running",
+                "run_id": run_id,
+                "split": split_name,
+                "pid": os.getpid(),
+                "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            })
 
-    write_json(run_dir / "summary.json", {"run_id": run_id, "scores": all_scores})
-    print(f"A0 run artifacts saved to {run_dir.relative_to(ROOT)}")
+            def log_progress(progress, current_split=split_name):
+                """Mirror live scalar metrics to the active MLflow run."""
+                step = int(progress["completed"])
+                scalar_metrics = {
+                    f"{current_split}.{key}": float(value)
+                    for key, value in progress.items()
+                    if key in {
+                        "percent", "examples_per_second", "mean_generation_seconds",
+                        "mean_input_tokens", "mean_output_tokens",
+                        "strict_prompt_accuracy", "strict_instruction_accuracy",
+                        "loose_prompt_accuracy", "loose_instruction_accuracy",
+                    } and value is not None
+                }
+                try:
+                    mlflow.log_metrics(scalar_metrics, step=step)
+                except Exception as error:  # Tracker failure cannot invalidate evidence.
+                    print(f"MLflow progress logging failed: {error}", file=sys.stderr, flush=True)
+
+            response_path = split_dir / "raw_responses.jsonl"
+            records = build_responses(
+                split_rows,
+                config,
+                response_path,
+                split_dir / "progress.json",
+                on_progress=log_progress,
+            )
+            all_scores[split_name] = score_split(split_rows, records, split_dir, evaluator_dir)
+            write_json(split_dir / "metrics.json", all_scores[split_name])
+            write_json(lifecycle_path, {
+                "status": "complete",
+                "run_id": run_id,
+                "split": split_name,
+                "pid": os.getpid(),
+                "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            })
+            strict = all_scores[split_name]["strict"]
+            loose = all_scores[split_name]["loose"]
+            mlflow.log_metrics({
+                f"{split_name}.final.strict_prompt_accuracy": strict["prompt_accuracy"],
+                f"{split_name}.final.strict_instruction_accuracy": strict["instruction_accuracy"],
+                f"{split_name}.final.loose_prompt_accuracy": loose["prompt_accuracy"],
+                f"{split_name}.final.loose_instruction_accuracy": loose["instruction_accuracy"],
+            })
+            # Keep the held-out run unmistakably separate in the evidence tree.
+            if split_name == "heldout_test":
+                os.chmod(split_dir, 0o700)
+
+        write_json(run_dir / "summary.json", {"run_id": run_id, "scores": all_scores})
+        mlflow.log_artifacts(str(run_dir), artifact_path="evidence")
+        mlflow.end_run(status="FINISHED")
+        print(f"A0 run artifacts saved to {run_dir.relative_to(ROOT)}")
+    except BaseException as error:
+        # Preserve a visible failure state even for a keyboard interrupt or a
+        # dashboard stop request. Existing response records remain resumable.
+        for split_name in args.splits:
+            split_dir = run_dir / split_name
+            lifecycle = json.loads((split_dir / "lifecycle.json").read_text()) if (split_dir / "lifecycle.json").exists() else {}
+            if lifecycle.get("status") == "running":
+                lifecycle.update({
+                    "status": "interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+                    "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                })
+                write_json(split_dir / "lifecycle.json", lifecycle)
+        mlflow.set_tag("rrsi.error_type", type(error).__name__)
+        mlflow.set_tag("rrsi.error", str(error)[:1000])
+        mlflow.end_run(status="KILLED" if isinstance(error, KeyboardInterrupt) else "FAILED")
+        raise
 
 
 if __name__ == "__main__":

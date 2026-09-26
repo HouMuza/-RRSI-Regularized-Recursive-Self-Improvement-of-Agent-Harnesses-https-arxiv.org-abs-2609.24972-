@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>rrsi lab console</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="RRSI lab overview">
+          <span class="brand-mark">r</span>
+          <span><strong>rrsi lab</strong><small>experiment console</small></span>
+        </a>
+        <nav id="navigation" aria-label="Experiment console">
+          <a href="#overview" data-view="overview">overview</a>
+          <a href="#runs" data-view="runs">runs</a>
+          <a href="#examples" data-view="examples">examples</a>
+          <a href="#compare" data-view="compare">compare</a>
+          <a href="#gate" data-view="gate">a0 gate</a>
+          <a href="#system" data-view="system">system</a>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="pulse" id="system-pulse"></span>
+          <span id="system-label">checking local runner</span>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">phase a / a0 infrastructure</p>
+            <h1 id="page-title">overview</h1>
+          </div>
+          <div class="top-actions">
+            <span id="last-refresh" class="muted"></span>
+            <button class="button secondary" id="refresh-button">refresh</button>
+            <button class="button primary" id="start-button">resume evolution</button>
+            <button class="button danger hidden" id="stop-button">stop run</button>
+          </div>
+        </header>
+        <div id="banner" class="banner hidden" role="status"></div>
+        <section id="content" aria-live="polite">
+          <div class="loading">loading experiment state…</div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="example-dialog">
+      <button class="dialog-close" aria-label="Close example">×</button>
+      <div id="example-detail"></div>
+    </dialog>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

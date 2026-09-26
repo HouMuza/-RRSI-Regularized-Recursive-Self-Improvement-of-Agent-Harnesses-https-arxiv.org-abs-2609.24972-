@@ -1,84 +1,92 @@
-"""Serve a local dashboard and start or resume A0 runs on request.
-
-The dashboard requires only Python's standard library. It reads artifacts
-written by run_a0.py and can launch one local runner process from its start
-button. The runner writes its own progress files, which this page polls.
-"""
+"""Serve the local RRSI experiment console and its JSON API."""
 
 from __future__ import annotations
 
 import argparse
-import html
+import datetime
 import json
+import mimetypes
 import os
+import signal
 import subprocess
-import sys
 import threading
 import time
-from urllib.parse import parse_qs
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
+
+import experiment_store as store
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNS = ROOT / "runs/a0/experiments"
+STATIC_ROOT = ROOT / "phase-a/a0-infrastructure/dashboard"
 RUNNER = ROOT / "phase-a/a0-infrastructure/run_a0.py"
 PYTHON = ROOT / ".venv/bin/python"
 DEFAULT_RUN_ID = "a0-20260926-180736"
-LOCK = threading.Lock()
+CONTROL_PATH = store.CONTROL_PATH
+PROCESS_LOCK = threading.RLock()
 ACTIVE_PROCESS: subprocess.Popen[str] | None = None
-ACTIVE_LOG: object | None = None
+ACTIVE_LOG: Any = None
 
 
-def process_is_running() -> bool:
-    """Refresh the tracked process state and report whether it is still alive."""
-    global ACTIVE_PROCESS
-    with LOCK:
-        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is not None:
-            ACTIVE_PROCESS = None
-        return ACTIVE_PROCESS is not None
+def utc_now() -> str:
+    """Return an explicit UTC timestamp for process and decision records."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def any_runner_is_running() -> bool:
-    """Check local processes too, including a runner started before this server."""
-    if process_is_running():
-        return True
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", str(RUNNER)],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return any(line.strip().isdigit() and int(line.strip()) != os.getpid()
-               for line in result.stdout.splitlines())
+def atomic_json(path: Path, value: Any) -> None:
+    """Replace a JSON record atomically so readers never see half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
 
 
-def start_runner(split_names: list[str], run_id: str = DEFAULT_RUN_ID) -> tuple[bool, str]:
-    """Start one runner process, logging stdout and stderr into ignored runs/."""
+def reconcile_process() -> dict[str, Any]:
+    """Reconcile the in-memory child process with durable control state."""
     global ACTIVE_PROCESS, ACTIVE_LOG
-    with LOCK:
-        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is None:
-            return False, "An A0 runner is already active."
-        if any_runner_is_running():
-            return False, "An A0 runner is already active."
-        if not RUNNER.exists():
-            return False, f"Runner file is missing: {RUNNER}"
-        if not PYTHON.exists():
-            return False, f"Project environment is missing: {PYTHON}"
+    with PROCESS_LOCK:
+        control = store.active_control()
+        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is not None:
+            exit_code = ACTIVE_PROCESS.returncode
+            if ACTIVE_LOG is not None:
+                ACTIVE_LOG.close()
+            ACTIVE_PROCESS = None
+            ACTIVE_LOG = None
+            control.update({
+                "alive": False,
+                "status": "complete" if exit_code == 0 else "interrupted" if exit_code in {130, -signal.SIGTERM} else "failed",
+                "exit_code": exit_code,
+                "finished_at": utc_now(),
+            })
+            atomic_json(CONTROL_PATH, control)
+        return store.active_control()
 
-        # Log output outside tracked source so process errors and progress
-        # messages remain inspectable without making the git tree noisy.
-        log_dir = ROOT / "runs/a0/dashboard"
+
+def start_runner(run_id: str, split: str) -> tuple[bool, str]:
+    """Launch one resumable runner and record its PID and log path."""
+    global ACTIVE_PROCESS, ACTIVE_LOG
+    with PROCESS_LOCK:
+        current = reconcile_process()
+        if current.get("alive"):
+            return False, f"Runner {current.get('pid')} is already active."
+        if split != "evolution":
+            return False, "Dashboard launch is limited to the evolution split during A0."
+        normalized = run_id.removeprefix("a0-").replace("-", "")
+        if not run_id.startswith("a0-") or not normalized.isdigit():
+            return False, "The requested run id is invalid."
+        if not RUNNER.exists() or not PYTHON.exists():
+            return False, "The runner or project Python environment is missing."
+
+        log_dir = store.RUNS_ROOT / "dashboard"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = log_dir / f"runner-{int(time.time())}.log"
+        log_path = log_dir / f"{run_id}-{split}-{int(time.time())}.log"
         ACTIVE_LOG = log_path.open("a", encoding="utf-8")
+        command = [str(PYTHON), str(RUNNER), "--run-id", run_id, "--splits", split]
         environment = os.environ.copy()
-        environment.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
-        command = [str(PYTHON), str(RUNNER), "--run-id", run_id, "--splits", *split_names]
+        environment.setdefault("NLTK_DATA", str(store.RUNS_ROOT / "nltk_data"))
         try:
             ACTIVE_PROCESS = subprocess.Popen(
                 command,
@@ -92,221 +100,206 @@ def start_runner(split_names: list[str], run_id: str = DEFAULT_RUN_ID) -> tuple[
         except OSError as error:
             ACTIVE_LOG.close()
             ACTIVE_LOG = None
-            return False, f"Runner launch failed: {error}"
-        return True, f"A0 runner started for {', '.join(split_names)}. Log: {log_path.relative_to(ROOT)}"
+            return False, f"Could not launch the runner: {error}"
+        control = {
+            "pid": ACTIVE_PROCESS.pid,
+            "run_id": run_id,
+            "split": split,
+            "status": "running",
+            "alive": True,
+            "started_at": utc_now(),
+            "log_path": str(log_path.relative_to(ROOT)),
+            "command": command,
+        }
+        atomic_json(CONTROL_PATH, control)
+        return True, f"Started {run_id} / {split}."
+
+
+def stop_runner() -> tuple[bool, str]:
+    """Request graceful termination of the exact PID in the control record."""
+    with PROCESS_LOCK:
+        control = reconcile_process()
+        pid = control.get("pid")
+        if not control.get("alive") or not pid:
+            return False, "No active A0 runner was found."
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except OSError as error:
+            return False, f"Could not stop runner {pid}: {error}"
+        control.update({"status": "stopping", "stop_requested_at": utc_now()})
+        atomic_json(CONTROL_PATH, control)
+        return True, f"Stop requested for runner {pid}."
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    """Return a single self-refreshing page with the latest run metrics."""
+    """Serve static console assets and the local experiment JSON API."""
 
-    def do_GET(self) -> None:  # noqa: N802, required by the stdlib server API
-        if self.path == "/health":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"ok")
-            return
+    server_version = "rrsi-a0-console/1"
 
-        if self.path == "/start":
-            # A state-changing request must not be triggered by a page refresh
-            # or a cross-site image, so launching is only accepted through POST.
-            self.send_error(405, "Use the start form to launch an A0 run")
-            return
-
-        run_dirs = sorted((path for path in RUNS.glob("a0-*") if path.is_dir()), reverse=True)
-        rows = []
-        for run_dir in run_dirs:
-            for progress_file in sorted(run_dir.glob("*/progress.json")):
-                try:
-                    progress = json.loads(progress_file.read_text())
-                except (OSError, json.JSONDecodeError):
-                    # A partially written file is skipped and will appear on
-                    # the next browser refresh once the atomic update lands.
-                    continue
-                # Reconcile the heartbeat with the durable response file. This
-                # catches a crash between writing a response and its progress
-                # update, and prevents old runs from appearing live forever.
-                split_dir = progress_file.parent
-                response_file = split_dir / "raw_responses.jsonl"
-                completed = sum(1 for line in response_file.open() if line.strip()) if response_file.exists() else 0
-                progress["completed"] = completed
-                total = int(progress.get("total", 0))
-                progress["percent"] = 100.0 * completed / total if total else 0.0
-                age_seconds = max(time.time() - progress_file.stat().st_mtime, 0.0)
-                progress["age_seconds"] = age_seconds
-                if total and completed >= total:
-                    progress["status"] = "complete"
-                elif age_seconds > 120:
-                    progress["status"] = "stale, interrupted"
-                rows.append((run_dir.name, split_dir.name, progress))
-
-        cards = []
-        chart_data = []
-        for run_id, split, data in rows:
-            history_path = RUNS / run_id / split / "progress.jsonl"
-            history = []
-            if history_path.exists():
-                for line in history_path.read_text().splitlines():
-                    try:
-                        history.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-            chart_data.append({"run": f"{run_id} / {split}", "points": history})
-            pct = max(0.0, min(float(data.get("percent", 0)), 100.0))
-            cards.append(f"""
-            <section class="card">
-              <div class="top"><h2>{html.escape(run_id)} / {html.escape(split)}</h2>
-                <span class="status">{html.escape(data.get('status', 'unknown'))}</span></div>
-              <div class="bar"><div style="width:{pct:.1f}%"></div></div>
-              <p class="count">{data.get('completed', 0)} / {data.get('total', 0)} examples <b>{pct:.1f}%</b></p>
-              <div class="grid">
-                <div><label>strict prompt</label><strong>{float(data.get('strict_prompt_accuracy', 0)):.1%}</strong><small>{data.get('strict_prompt_correct', 0)}/{data.get('scored_examples', 0)} scored</small></div>
-                <div><label>strict instruction</label><strong>{float(data.get('strict_instruction_accuracy', 0)):.1%}</strong></div>
-                <div><label>loose prompt</label><strong>{float(data.get('loose_prompt_accuracy', 0)):.1%}</strong><small>{data.get('loose_prompt_correct', 0)}/{data.get('scored_examples', 0)} scored</small></div>
-                <div><label>loose instruction</label><strong>{float(data.get('loose_instruction_accuracy', 0)):.1%}</strong></div>
-                <div><label>speed</label><strong>{float(data.get('examples_per_second', 0)):.3f} ex/s</strong></div>
-                <div><label>avg response</label><strong>{float(data.get('mean_output_tokens', 0)):.0f} tokens</strong></div>
-                <div><label>avg generation</label><strong>{float(data.get('mean_generation_seconds', 0)):.1f}s</strong></div>
-                <div><label>elapsed</label><strong>{float(data.get('elapsed_seconds', 0))/60:.1f} min</strong></div>
-              </div>
-              <p class="updated">Last progress write: {float(data.get('age_seconds', 0)) / 60:.1f} minutes ago | {html.escape(str(data.get('updated_at', '')))}</p>
-            </section>""")
-
-        running = any_runner_is_running()
-        launch_state = "disabled" if running else ""
-        launch_label = "runner already active" if running else "start or resume a0 run"
-        launch_panel = f"""
-        <section class="launch">
-          <form method="post" action="/start">
-            <label for="run-id">Run</label>
-            <input type="hidden" id="run-id" name="run_id" value="{DEFAULT_RUN_ID}">
-            <input type="hidden" name="split" value="evolution">
-            <button type="submit" {launch_state}>{launch_label}</button>
-          </form>
-          <p id="launch-message" role="status">Choose a split and click to start or resume from saved responses.</p>
-        </section>
-        """
-        content = launch_panel + ("\n".join(cards) or '<p class="empty">No run progress exists yet.</p>')
-        chart_payload = json.dumps(chart_data).replace("</", "<\\/")
-        page = f"""<!doctype html>
-        <html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3">
-        <meta name="viewport" content="width=device-width, initial-scale=1"><title>a0 experiment dashboard</title>
-        <style>
-          :root {{ color-scheme: dark; font: 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif; }}
-          body {{ margin: 0; background: #10141b; color: #e7edf5; }}
-          main {{ max-width: 980px; margin: 0 auto; padding: 36px 22px 70px; }}
-          h1 {{ margin: 0 0 6px; font-size: 28px; }}
-          .intro {{ color: #9aa8b8; margin: 0 0 24px; }}
-          .card {{ background: #1a222d; border: 1px solid #2a3746; border-radius: 14px; padding: 20px; margin: 16px 0; }}
-          .top {{ display: flex; justify-content: space-between; gap: 12px; align-items: center; }}
-          h2 {{ font-size: 17px; margin: 0; }} .status {{ color: #8bc5a3; font-size: 12px; }}
-          .bar {{ height: 9px; background: #303b49; border-radius: 10px; overflow: hidden; margin-top: 20px; }}
-          .bar div {{ height: 100%; background: #60c796; transition: width .35s; }}
-          .count {{ display: flex; justify-content: space-between; color: #abb8c7; margin: 7px 0 18px; }}
-          .grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }}
-          .grid div {{ background: #141a23; border-radius: 9px; padding: 11px; }}
-          label {{ display: block; color: #8d9bac; font-size: 12px; margin-bottom: 3px; }}
-          strong {{ font-size: 18px; }} small {{ display: block; color: #78879a; font-size: 10px; }} .updated {{ color: #78879a; font-size: 11px; margin: 16px 0 0; }}
-          .empty {{ color: #aab6c5; padding: 24px; background: #1a222d; border-radius: 12px; }}
-          .chart {{ background: #1a222d; border: 1px solid #2a3746; border-radius: 14px; padding: 16px; margin: 20px 0; }}
-          canvas {{ width: 100%; height: 250px; }}
-          .launch {{ background: #1a222d; border: 1px solid #2a3746; border-radius: 14px; padding: 18px; margin: 18px 0; }}
-          .launch form {{ display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }}
-          select, button {{ color: #e7edf5; background: #263344; border: 1px solid #40546a; border-radius: 8px; padding: 10px 14px; font: inherit; }}
-          button {{ background: #23875d; border-color: #36a875; cursor: pointer; font-weight: 650; }}
-          button:disabled {{ background: #3c4652; border-color: #4b5664; cursor: not-allowed; }}
-          #launch-message {{ color: #9aa8b8; margin: 12px 0 0; }}
-          @media (max-width: 650px) {{ .grid {{ grid-template-columns: repeat(2, 1fr); }} main {{ padding: 24px 14px; }} }}
-        </style></head><body><main><h1>a0 experiment dashboard</h1>
-        <p class="intro">Live local status from the frozen Qwen3-0.6B IFEval run. Refreshes every three seconds.</p>
-        <section class="chart"><h2>score over time</h2><canvas id="scores" width="900" height="250"></canvas></section>
-        {content}
-        <script>
-        const form = document.querySelector('.launch form');
-        form.addEventListener('submit', async event => {{
-          event.preventDefault();
-          const button = form.querySelector('button');
-          const message = document.getElementById('launch-message');
-          button.disabled = true;
-          button.textContent = 'starting…';
-          try {{
-            const response = await fetch('/start', {{method: 'POST', body: new FormData(form)}});
-            const result = await response.json();
-            message.textContent = result.message;
-            message.style.color = result.ok ? '#8bc5a3' : '#f1b85b';
-          }} catch (error) {{
-            message.textContent = 'Could not contact the local dashboard server: ' + error;
-            message.style.color = '#f1b85b';
-          }}
-          setTimeout(() => location.reload(), 1200);
-        }});
-        </script>
-        <script>
-        const runs = {chart_payload};
-        const canvas = document.getElementById('scores');
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#1a222d'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        const colors = ['#60c796', '#71aef5', '#f1b85b', '#df8de1'];
-        let series = [];
-        runs.forEach((run, ri) => ['strict_prompt_accuracy','loose_prompt_accuracy'].forEach((metric, mi) => {{
-          const pts = run.points.filter(p => Number.isFinite(p[metric]));
-          if (pts.length) series.push({{name: run.run + ' ' + (mi ? 'loose' : 'strict'), pts, color: colors[(ri * 2 + mi) % colors.length]}});
-        }}));
-        ctx.font = '12px sans-serif'; ctx.fillStyle = '#9aa8b8';
-        ctx.fillText('100%', 6, 18); ctx.fillText('0%', 6, 235);
-        ctx.strokeStyle = '#354252'; ctx.beginPath(); ctx.moveTo(44, 12); ctx.lineTo(44, 230); ctx.lineTo(890, 230); ctx.stroke();
-        series.forEach(s => {{
-          ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
-          s.pts.forEach((p, i) => {{ const x=48+(i/Math.max(s.pts.length-1,1))*830; const val=p[s.name.endsWith('loose')?'loose_prompt_accuracy':'strict_prompt_accuracy']; const y=225-val*205; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }});
-          ctx.stroke();
-        }});
-        </script></main></body></html>"""
-        payload = page.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def do_POST(self) -> None:  # noqa: N802, required by the stdlib server API
-        """Accept the dashboard start button and launch only known A0 splits."""
-        if self.path != "/start":
-            self.send_error(404)
-            return
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-            if content_length > 4096:
-                raise ValueError("Request form is too large")
-            form_data = self.rfile.read(content_length).decode("utf-8")
-            fields = parse_qs(form_data)
-            split_name = fields.get("split", ["evolution"])[0]
-            if split_name != "evolution":
-                raise ValueError("Dashboard launch is currently limited to the evolution split")
-            run_id = fields.get("run_id", [""])[0]
-            if run_id != DEFAULT_RUN_ID:
-                raise ValueError("Unknown run selection")
-            started, message = start_runner([split_name], run_id)
-            payload = json.dumps({"ok": started, "message": message}).encode("utf-8")
-            self.send_response(200 if started else 409)
-        except (UnicodeDecodeError, ValueError) as error:
-            payload = json.dumps({"ok": False, "message": str(error)}).encode("utf-8")
-            self.send_response(400)
+    def send_json(self, value: Any, status: int = 200) -> None:
+        """Serialize one API response with consistent no-cache headers."""
+        payload = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
 
+    def read_body(self) -> dict[str, Any]:
+        """Read a bounded JSON or form body."""
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 64 * 1024:
+            raise ValueError("Request body is too large")
+        raw = self.rfile.read(length)
+        if "application/json" in self.headers.get("Content-Type", ""):
+            return json.loads(raw.decode("utf-8") or "{}")
+        values = parse_qs(raw.decode("utf-8"))
+        return {key: items[0] for key, items in values.items()}
+
+    def serve_static(self, request_path: str) -> None:
+        """Serve only files that resolve under the checked-in static folder."""
+        relative = "index.html" if request_path in {"", "/"} else unquote(request_path.lstrip("/"))
+        candidate = (STATIC_ROOT / relative).resolve()
+        if STATIC_ROOT.resolve() not in candidate.parents and candidate != STATIC_ROOT.resolve():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if not candidate.is_file():
+            candidate = STATIC_ROOT / "index.html"
+        payload = candidate.read_bytes()
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def serve_artifact(self, run_id: str, artifact_path: str) -> None:
+        """Download one run artifact after resolving it inside that run only."""
+        run_root = (store.EXPERIMENTS_ROOT / run_id).resolve()
+        candidate = (run_root / artifact_path).resolve()
+        if run_root not in candidate.parents or not candidate.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        payload = candidate.read_bytes()
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Disposition", f'attachment; filename="{candidate.name}"')
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self) -> None:  # noqa: N802
+        """Route read-only API requests and static browser assets."""
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        path = parsed.path
+        if path == "/health":
+            self.send_json({"ok": True, "control": reconcile_process()})
+            return
+        if path == "/api/overview":
+            runs = store.list_runs()
+            selected = store.get_run(runs[0]["run_id"]) if runs else None
+            self.send_json({
+                "generated_at": utc_now(),
+                "control": reconcile_process(),
+                "runs": runs,
+                "selected": selected,
+                "protocol": store.read_json(store.CONFIG_PATH, {}),
+            })
+            return
+        if path == "/api/runs":
+            self.send_json({"runs": store.list_runs(), "control": reconcile_process()})
+            return
+        if path.startswith("/api/runs/"):
+            run_id = unquote(path.removeprefix("/api/runs/"))
+            run = store.get_run(run_id)
+            self.send_json(run or {"error": "Run not found"}, 200 if run else 404)
+            return
+        if path == "/api/examples":
+            run_id = query.get("run_id", [""])[0]
+            split = query.get("split", ["evolution"])[0]
+            examples = store.evaluate_examples(run_id, split)
+            self.send_json({"examples": examples, "slices": store.slice_metrics(examples)})
+            return
+        if path == "/api/compare":
+            left = query.get("left", [""])[0]
+            right = query.get("right", [""])[0]
+            split = query.get("split", ["evolution"])[0]
+            self.send_json(store.comparison(left, right, split))
+            return
+        if path == "/api/logs":
+            control = reconcile_process()
+            relative = control.get("log_path")
+            log_path = ROOT / relative if relative else Path("/nonexistent")
+            self.send_json({"control": control, "lines": store.tail_log(log_path)})
+            return
+        if path == "/api/mlflow":
+            self.send_json({
+                "tracking_uri": f"sqlite:///{(store.RUNS_ROOT / 'mlflow.db').as_posix()}",
+                "database_exists": (store.RUNS_ROOT / "mlflow.db").exists(),
+                "ui_command": ".venv/bin/mlflow server --backend-store-uri sqlite:///runs/a0/mlflow.db --port 5000",
+                "ui_url": "http://127.0.0.1:5000",
+            })
+            return
+        if path == "/api/artifact":
+            self.serve_artifact(
+                query.get("run_id", [""])[0],
+                query.get("path", [""])[0],
+            )
+            return
+        self.serve_static(path)
+
+    def do_POST(self) -> None:  # noqa: N802
+        """Route explicit local control and gate-decision actions."""
+        try:
+            body = self.read_body()
+            if self.path == "/api/runs/start":
+                run_id = str(body.get("run_id") or DEFAULT_RUN_ID)
+                split = str(body.get("split") or "evolution")
+                ok, message = start_runner(run_id, split)
+                self.send_json({"ok": ok, "message": message, "control": reconcile_process()}, 200 if ok else 409)
+                return
+            if self.path == "/api/runs/stop":
+                ok, message = stop_runner()
+                self.send_json({"ok": ok, "message": message, "control": reconcile_process()}, 200 if ok else 409)
+                return
+            if self.path == "/api/gate":
+                run_id = str(body.get("run_id") or "")
+                decision = str(body.get("decision") or "")
+                note = str(body.get("note") or "")[:2000]
+                if decision not in {"approved", "rejected"}:
+                    raise ValueError("Gate decision must be approved or rejected")
+                run_dir = store.EXPERIMENTS_ROOT / run_id
+                if not run_dir.is_dir():
+                    raise ValueError("Run does not exist")
+                gate = store.gate_status(run_dir)
+                if decision == "approved" and not gate["evidence_ready"]:
+                    self.send_json({"ok": False, "message": "A0 evidence is not complete yet."}, 409)
+                    return
+                record = {"decision": decision, "note": note, "recorded_at": utc_now()}
+                atomic_json(run_dir / "gate_decision.json", record)
+                self.send_json({"ok": True, "message": f"Gate decision recorded: {decision}", "decision": record})
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+        except (ValueError, json.JSONDecodeError) as error:
+            self.send_json({"ok": False, "message": str(error)}, 400)
+
     def log_message(self, format: str, *args: object) -> None:
-        """Keep access logs concise while leaving requests observable."""
+        """Keep request logs readable without suppressing operational evidence."""
         print(f"dashboard {self.address_string()} {format % args}", flush=True)
 
 
 def main() -> None:
+    """Start the threaded localhost experiment console."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", default="127.0.0.1", help="Local bind address")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
-    print(f"Dashboard available at http://{args.host}:{args.port}", flush=True)
+    print(f"RRSI experiment console available at http://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

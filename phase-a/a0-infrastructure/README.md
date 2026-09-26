@@ -61,26 +61,50 @@ complete.
 ## implementation
 
 Install the isolated dependencies from this directory's `requirements.txt`,
-then start the dashboard with `python dashboard.py` and open
-`http://127.0.0.1:8765`. In a second
-terminal, run `python run_a0.py`. Or click **start or resume a0 run** in the
-dashboard to continue the saved baseline. The button launches the selected
-split, refuses a duplicate local runner, and writes process output to an ignored
-log under `runs/a0/dashboard/`. The checked-in `config.json` pins the
-dataset, verifier, local model snapshot, greedy decoding settings, split seed,
-and proportions. Each invocation creates or resumes a local run directory under
-`runs/a0/experiments/` with split memberships, raw responses, official strict
-and loose scores, environment details, token counts, and timing data.
+then start the console from the repository root:
 
-The dashboard refreshes every three seconds with example progress, current
-official strict and loose scores with scored-example counts, generation speed,
-token counts, and elapsed time. It also plots the score history. Detailed records and progress events
-are written as each response completes. Review
-`split_manifest.json` before treating the split as frozen. It includes
-exact memberships and instruction-family counts. A0 currently has no improver
-model call, no API cost, and no MLflow dependency. The local JSON manifests and
-JSONL artifacts are the source of record. Review aggregate results and example
-outputs before opening a1.
+```bash
+.venv/bin/python phase-a/a0-infrastructure/dashboard.py
+```
+
+Open `http://127.0.0.1:8765`. The console provides:
+
+- an overview with live health, ETA, phase progress, protocol warnings, and the
+  A0 evidence gate;
+- a searchable run registry and detailed run pages;
+- official strict and loose metric histories;
+- 95% Wilson intervals for prompt-level pass rates;
+- per-example prompts, responses, instruction checks, tokens, and latency for
+  evolution and validation data;
+- instruction-family slice analysis and run-to-run comparison;
+- durable start, resume, and stop controls with process logs;
+- exact model, data, evaluator, code, environment, artifact, and MLflow
+  provenance;
+- a gate decision surface that cannot approve A0 until its evidence checks
+  pass.
+
+The held-out example browser is deliberately disabled so final task text is not
+exposed during development. Aggregate held-out results may be recorded only at
+the registered final evaluation point.
+
+The checked-in `config.json` pins the dataset, verifier, local model snapshot,
+greedy decoding settings, split seed, and proportions. Each invocation creates
+or resumes a local directory under `runs/a0/experiments/`. JSON and JSONL files
+remain the canonical, directly auditable evidence. The runner also mirrors
+parameters, metric history, tags, and evidence artifacts into a local MLflow
+SQLite ledger at `runs/a0/mlflow.db`.
+
+To open the standard MLflow interface alongside the RRSI console:
+
+```bash
+.venv/bin/mlflow server \
+  --backend-store-uri sqlite:///runs/a0/mlflow.db \
+  --port 5000
+```
+
+Then open `http://127.0.0.1:5000`. W&B is not required for A0 because MLflow
+provides local run search, comparison, metric history, and artifact tracking
+without transmitting experiment data to a hosted service.
 
 ## completion evidence
 

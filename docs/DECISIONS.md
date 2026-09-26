@@ -3,6 +3,18 @@
 Record research and implementation decisions that affect comparability or
 future interpretation. Add new entries at the top.
 
+## 2026-09-26: use a local experiment console and MLflow ledger
+
+- **Decision:** Use the project console for RRSI-specific run control,
+  per-example IFEval evidence, comparisons, provenance, and phase gates. Mirror
+  standard parameters, metric histories, and artifacts into local MLflow.
+- **Reason:** The project needs direct operational visibility and domain-specific
+  evidence while retaining a standard experiment registry and comparison tool.
+- **Constraint:** JSON and JSONL run artifacts remain the canonical evidence.
+  MLflow is a secondary index. W&B is not enabled because A0 does not require a
+  hosted service or external transmission of experiment data.
+- **Decision owner:** Project owner.
+
 ## 2026-09-26: use the rrsi paper as a reference, not as an assumed result
 
 - **Source:** Xia et al., [rrsi: Regularized Recursive Self-Improvement of
