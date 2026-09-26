@@ -158,6 +158,7 @@ def build_responses(
     config: dict[str, Any],
     output_path: Path,
     progress_path: Path,
+    device: str,
     on_progress=None,
 ) -> list[dict[str, Any]]:
     """Run deterministic greedy generation and persist every raw response."""
@@ -174,7 +175,12 @@ def build_responses(
         local_files_only=True,
         torch_dtype="auto",
     )
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    # A resumed run must keep the device recorded when the run was created.
+    # Hardware choice can affect numerical behavior, latency, and therefore
+    # comparability. Detecting a newly available accelerator during a resume
+    # would silently change the frozen protocol.
+    if device == "mps" and not torch.backends.mps.is_available():
+        raise RuntimeError("This run is frozen to MPS, but MPS is unavailable")
     model.to(device)
     model.eval()
 
@@ -403,7 +409,8 @@ def start_mlflow_run(run_dir: Path, run_id: str, config: dict[str, Any], environ
     mlflow.set_experiment("rrsi-a0")
     ledger_path = run_dir / "mlflow.json"
     ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
-    if ledger.get("run_id"):
+    is_new_ledger_entry = not ledger.get("run_id")
+    if not is_new_ledger_entry:
         active = mlflow.start_run(run_id=ledger["run_id"])
     else:
         active = mlflow.start_run(
@@ -419,17 +426,20 @@ def start_mlflow_run(run_dir: Path, run_id: str, config: dict[str, Any], environ
             "experiment_id": active.info.experiment_id,
             "tracking_uri": tracking_uri,
         })
-    mlflow.log_params({
-        "model": config["model"]["name"],
-        "model_revision": config["model"]["revision"],
-        "dataset": config["benchmark"]["name"],
-        "dataset_revision": config["benchmark"]["dataset_revision"],
-        "evaluator_revision": config["evaluator"]["revision"],
-        "split_seed": config["split"]["seed"],
-        "max_new_tokens": config["model"]["max_new_tokens"],
-        "do_sample": config["model"]["do_sample"],
-        "device": environment["selected_device"],
-    })
+    # MLflow parameters are immutable. Log them exactly once when the ledger
+    # entry is created. Metric histories may continue on every resume.
+    if is_new_ledger_entry:
+        mlflow.log_params({
+            "model": config["model"]["name"],
+            "model_revision": config["model"]["revision"],
+            "dataset": config["benchmark"]["name"],
+            "dataset_revision": config["benchmark"]["dataset_revision"],
+            "evaluator_revision": config["evaluator"]["revision"],
+            "split_seed": config["split"]["seed"],
+            "max_new_tokens": config["model"]["max_new_tokens"],
+            "do_sample": config["model"]["do_sample"],
+            "device": environment["selected_device"],
+        })
     return active
 
 
@@ -493,7 +503,7 @@ def main() -> None:
     # IFEval's sentence and word checks use NLTK assets. Keep their location
     # inside ignored run storage so the source checkout stays self-contained.
     os.environ.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
-    environment = {
+    current_environment = {
         "python": sys.version,
         "platform": platform.platform(),
         "machine": platform.machine(),
@@ -508,7 +518,14 @@ def main() -> None:
         "config_sha256": sha256_file(args.config),
         "source_sha256": observed_sha,
     }
-    write_json(run_dir / "environment.json", environment)
+    environment_path = run_dir / "environment.json"
+    if environment_path.exists():
+        # The environment is evidence, not mutable status. Preserve the
+        # original device and provenance whenever an interrupted run resumes.
+        environment = json.loads(environment_path.read_text())
+    else:
+        environment = current_environment
+        write_json(environment_path, environment)
 
     # MLflow is the standard searchable ledger. The JSON and JSONL files stay
     # canonical because they are simple to audit and do not depend on a server.
@@ -552,6 +569,7 @@ def main() -> None:
                 config,
                 response_path,
                 split_dir / "progress.json",
+                device=environment["selected_device"],
                 on_progress=log_progress,
             )
             all_scores[split_name] = score_split(split_rows, records, split_dir, evaluator_dir)
