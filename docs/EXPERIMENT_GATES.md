@@ -1,24 +1,24 @@
-# Experiment Gates and Evidence Requirements
+# experiment gates and evidence requirements
 
 The project advances one experiment at a time. Completing code or obtaining a
 promising score does not unlock the next experiment. The project owner reviews
 the evidence pack and explicitly approves each gate.
 
-## Required evidence pack
+## required evidence pack
 
 Every experiment produces a versioned, immutable evidence pack containing:
 
 1. **Question and hypotheses.** State the question, expected outcomes, and what
    results would contradict the hypothesis.
-2. **Run manifest.** Record run ID, timestamp, source revision, phase and
-   experiment IDs, random seeds, environment, hardware, model names and exact
+2. **Run manifest.** Record run id, timestamp, source revision, phase and
+   experiment ids, random seeds, environment, hardware, model names and exact
    versions, decoding settings, and all relevant configuration.
 3. **Data provenance.** Record source, license or access terms, preprocessing,
    split assignments, and cryptographic fingerprints for every dataset file.
 4. **Evaluator provenance.** Record evaluator code revision, rubric or scoring
    version, and any known evaluator limitations.
-5. **Mutation ledger.** Keep each candidate's parent ID, complete proposed
-   diff, rationale, status, failure details, evaluation IDs, selection result,
+5. **Mutation ledger.** Keep each candidate's parent id, complete proposed
+   diff, rationale, status, failure details, evaluation ids, selection result,
    and complexity delta. Rejected candidates are part of the result.
 6. **Raw outcomes.** Store per-example inputs or stable references, outputs,
    scores, errors, retries, and timing. Protect secrets and personal data.
@@ -30,7 +30,7 @@ Every experiment produces a versioned, immutable evidence pack containing:
    deviations, and alternative interpretations.
 10. **Decision record.** Record the gate decision, approver, date, and rationale.
 
-## Split discipline
+## split discipline
 
 - The **evolution split** may be used to propose and optimize candidates.
 - The **validation split** may be used only according to the pre-registered
@@ -41,13 +41,13 @@ Every experiment produces a versioned, immutable evidence pack containing:
   subsequent confirmatory claims. Document and replace it with a newly sealed
   split before continuing.
 
-The RRSI paper describes conservative candidate acceptance using repeated
+The rrsi paper describes conservative candidate acceptance using repeated
 measurements on its evolution split, with separate held-out suites used to
 measure transfer. Do not describe this as selecting candidates on the held-out
 test set. If our protocol adds validation-based selection, document that as our
 own pre-registered design choice.
 
-## Metrics
+## metrics
 
 Choose metrics before a run. Report at minimum:
 
@@ -62,7 +62,7 @@ Do not combine these into one score unless the weights and rationale were
 specified before observing outcomes. If using a complexity-regularized score,
 report its components separately as well.
 
-## Gate decision template
+## gate decision template
 
 Each experiment should add a decision record with:
 
@@ -79,7 +79,7 @@ Approver and date:
 Rationale:
 ```
 
-## Data and secrets
+## data and secrets
 
 Do not commit API keys, credentials, private data, or restricted benchmark
 content. Store large or restricted artifacts in an approved location and commit

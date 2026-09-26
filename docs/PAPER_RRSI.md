@@ -1,8 +1,8 @@
-# Paper Notes: RRSI
+# paper notes: rrsi
 
-## Citation and version
+## citation and version
 
-Peng Xia et al., [RRSI: Regularized Recursive Self-Improvement of Agent
+Peng Xia et al., [rrsi: Regularized Recursive Self-Improvement of Agent
 Harnesses](https://arxiv.org/abs/2609.24972), arXiv:2609.24972, version 2,
 revised 23 September 2026. This is a preprint. These notes summarize the
 authors' method and reported results. They are not an independent reproduction.
@@ -14,7 +14,7 @@ Primary sources:
 - [Authors' code repository](https://github.com/google-research/rrsi)
 - [Project page](https://regularized-rsi.com/)
 
-## Research question
+## research question
 
 The paper studies whether repeated edits to an agent harness can overfit a
 finite set of evolution tasks. A harness includes more than a prompt. It may
@@ -23,15 +23,15 @@ The backbone policy remains frozen while the harness evolves.
 
 The central design choice is to leave the set of potentially editable harness
 components open while regularizing the search trajectory and the rules that
-allow a candidate to replace the incumbent. RRSI does not prescribe one target
+allow a candidate to replace the incumbent. rrsi does not prescribe one target
 architecture. It constrains how quickly and on what evidence the system
 changes.
 
-## Method in the paper
+## method in the paper
 
-RRSI has proposal-side and selection-side controls.
+rrsi has proposal-side and selection-side controls.
 
-### Proposal-side controls
+### proposal-side controls
 
 1. **Annealed edit budget.** A candidate may bundle only a limited number of
    independently attributable edits. The limit decreases over the run. Early
@@ -45,7 +45,7 @@ RRSI has proposal-side and selection-side controls.
    measured noise band, some proposal capacity is directed toward editable
    components that have not yet been explored.
 
-### Selection-side controls
+### selection-side controls
 
 1. **Leakage screening.** A critic screens candidate diffs before full
    evaluation for benchmark-specific task names, entities, values, answers,
@@ -67,7 +67,7 @@ The authors use analogies to L0, L1, and L2 regularization for edit sparsity,
 structural pruning, and aggregate cost control. These are functional analogies,
 not direct optimization of L0, L1, or L2 penalties on a fixed parameter vector.
 
-## Evaluation design and reported results
+## evaluation design and reported results
 
 The paper reports eight benchmarks in three domains: coding, agentic workspace,
 and engineering design. The evaluated policy is frozen during each evolution
@@ -80,19 +80,19 @@ up to 4.7 points on the five out-of-distribution benchmarks, and about 30%
 fewer policy tokens than unregularized evolution. The detailed workspace
 ablation reports:
 
-| Variant | Evolution score | In-distribution held-out | OOD average | Policy tokens per trial |
+| Variant | Evolution score | In-distribution held-out | ood average | Policy tokens per trial |
 | --- | ---: | ---: | ---: | ---: |
 | Unevolved baseline | 89.4 | 86.9 | 39.7 | 1.56 million |
 | Unregularized evolution | 92.8 | 88.9 | 40.3 | 3.80 million |
-| RRSI without proposal controls | 90.7 | 88.8 | 41.9 | 2.69 million |
-| RRSI without acceptance controls | 91.5 | 88.7 | 41.0 | 3.59 million |
-| RRSI | 90.5 | 89.2 | 43.6 | 2.42 million |
+| rrsi without proposal controls | 90.7 | 88.8 | 41.9 | 2.69 million |
+| rrsi without acceptance controls | 91.5 | 88.7 | 41.0 | 3.59 million |
+| rrsi | 90.5 | 89.2 | 43.6 | 2.42 million |
 
-The OOD average in this table is the mean across JobBench, GDPval, and
+The ood average in this table is the mean across JobBench, GDPval, and
 APEX-Agents. These are the paper's measurements, not results from our project.
 In this ablation, unregularized evolution has the highest evolution score but
 transfers less well and costs more. Removing either family of regularizers
-reduces the reported OOD average. The paper also reports positive held-out
+reduces the reported ood average. The paper also reports positive held-out
 results in its other domains and tests transfer to a backbone model that was
 not used during search.
 
@@ -100,35 +100,35 @@ The LinkedIn post's phrase “improved on every one” should be read in the
 context of the paper's tested held-out splits and comparisons. It does not
 guarantee improvement on every unseen task or in a new project.
 
-## How this informs our plan
+## how this informs our plan
 
 The first prompt-only experiment is a deliberately narrow systems check. It
 does not reproduce the whole paper, since the paper's harness can include
 control flow, configuration, tools, skills, memory, context management, and
-subagents. We should label A1 a prompt-only baseline experiment, not a full RRSI
+subagents. We should label a1 a prompt-only baseline experiment, not a full rrsi
 replication.
 
 | Our experiment | Relationship to the paper |
 | --- | --- |
-| A0: infrastructure | Establishes repeatability, frozen model and evaluator versions, run lineage, cost capture, and separate data splits. |
-| A1: prompt evolution | Tests the proposal, evaluation, and selection loop with one mutable component. It is a scoped initial experiment. |
-| A2: overfitting | Measures whether repeated adaptation to a finite evolution set produces a transfer gap in our environment. |
-| A3: regularized RSI | Implements and ablates selected proposal and selection controls. The exact subset and deviations must be declared before runs. |
+| a0: infrastructure | Establishes repeatability, frozen model and evaluator versions, run lineage, cost capture, and separate data splits. |
+| a1: prompt evolution | Tests the proposal, evaluation, and selection loop with one mutable component. It is a scoped initial experiment. |
+| a2: overfitting | Measures whether repeated adaptation to a finite evolution set produces a transfer gap in our environment. |
+| a3: regularized rsi | Implements and ablates selected proposal and selection controls. The exact subset and deviations must be declared before runs. |
 | B: broader software evolution | Explores additional mutation classes after the basic loop is understood. This extends beyond the initial prompt-only study. |
 
-RRSI's held-out benchmarks are final transfer evaluations, not a pool from
+rrsi's held-out benchmarks are final transfer evaluations, not a pool from
 which the proposer selects candidates. We may use a separate validation split
 for a pre-registered selection rule, but the final held-out test split must
 remain unseen by the improver and selection process. Using held-out results to
 guide a new edit makes that split development data and invalidates it for later
 confirmatory claims.
 
-## Decisions and open questions for A0 and A3
+## decisions and open questions for a0 and a3
 
 - Which task family gives us a small, licensed, repeatable starting benchmark?
 - Can we use a deterministic verifier, or must a task rely on a judge model?
 - How will repeated baseline runs estimate evaluation noise?
-- What constitutes an atomic, attributable prompt edit in A1?
+- What constitutes an atomic, attributable prompt edit in a1?
 - Which costs will we track beyond policy tokens, such as improver tokens,
   wall-clock latency, retries, and monetary or local compute cost?
 - Which proposal-side and selection-side regularizers can be implemented
@@ -141,10 +141,10 @@ confirmatory claims.
   under terms that permit a reproduction? Do not assume access to the paper
   implies access to its datasets or infrastructure.
 
-These decisions belong in A0's configuration and preregistered protocol. Avoid
+These decisions belong in a0's configuration and preregistered protocol. Avoid
 choosing parameters after looking at final held-out results.
 
-## Interpretation limits
+## interpretation limits
 
 - The cited work is a preprint, and our project has not reproduced its
   measurements.

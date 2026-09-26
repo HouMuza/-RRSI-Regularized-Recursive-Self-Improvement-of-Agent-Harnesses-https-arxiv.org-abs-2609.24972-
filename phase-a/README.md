@@ -1,6 +1,6 @@
-# Phase A: Prove the RSI Machinery
+# phase a: prove the rsi machinery
 
-Phase A tests whether recursive improvement, evaluation, selection, and
+phase a tests whether recursive improvement, evaluation, selection, and
 lineage work in a small task environment.
 
 Experiments are ordered and gated:

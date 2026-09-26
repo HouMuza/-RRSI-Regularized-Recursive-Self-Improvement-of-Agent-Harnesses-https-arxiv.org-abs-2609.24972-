@@ -1,6 +1,6 @@
-# Phase D: Evolution Inside the Bank
+# phase d: evolution inside the bank
 
-Phase D combines the validated evolutionary machinery with the validated bank
+phase d combines the validated evolutionary machinery with the validated bank
 world. Begin with a static baseline and unlock one mutation capability at a
 time. Every step requires its own complete evidence pack and explicit approval.
-This phase remains locked until Phases B and C are independently ready.
+This phase remains locked until phases B and C are independently ready.
