@@ -72,13 +72,28 @@ def start_runner(run_id: str, split: str) -> tuple[bool, str]:
         current = reconcile_process()
         if current.get("alive"):
             return False, f"Runner {current.get('pid')} is already active."
-        if split != "evolution":
-            return False, "Dashboard launch is limited to the evolution split during A0."
+        allowed_splits = ("evolution", "validation", "heldout_test")
+        if split not in allowed_splits:
+            return False, "The requested A0 split is invalid."
         normalized = run_id.removeprefix("a0-").replace("-", "")
         if not run_id.startswith("a0-") or not normalized.isdigit():
             return False, "The requested run id is invalid."
         if not RUNNER.exists() or not PYTHON.exists():
             return False, "The runner or project Python environment is missing."
+
+        # Enforce the evaluation sequence in the backend as well as the UI.
+        # This prevents an edited browser request from opening held-out data
+        # before evolution and validation evidence has been completed.
+        run_dir = store.EXPERIMENTS_ROOT / run_id
+        required_predecessors = {
+            "evolution": (),
+            "validation": ("evolution",),
+            "heldout_test": ("evolution", "validation"),
+        }
+        for predecessor in required_predecessors[split]:
+            summary = store.split_snapshot(run_dir, predecessor) or {}
+            if summary.get("status") != "complete":
+                return False, f"Complete {predecessor.replace('_', ' ')} before starting {split.replace('_', ' ')}."
 
         log_dir = store.RUNS_ROOT / "dashboard"
         log_dir.mkdir(parents=True, exist_ok=True)

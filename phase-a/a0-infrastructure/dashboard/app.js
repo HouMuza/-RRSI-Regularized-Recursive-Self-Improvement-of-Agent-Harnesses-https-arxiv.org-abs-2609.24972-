@@ -89,6 +89,15 @@ function selectedSplit(run = state.selectedRun) {
   return run?.splits?.evolution || {};
 }
 
+function nextRunnableSplit(run = state.selectedRun) {
+  // Runs proceed in protocol order. An incomplete split is always resumed
+  // before a later split can start, including after a browser refresh.
+  for (const name of ["evolution", "validation", "heldout_test"]) {
+    if (run?.splits?.[name]?.status !== "complete") return name;
+  }
+  return null;
+}
+
 function updateChrome() {
   const control = state.overview?.control || {};
   const running = Boolean(control.alive);
@@ -98,6 +107,13 @@ function updateChrome() {
     : "local runner idle";
   startButton.classList.toggle("hidden", running);
   stopButton.classList.toggle("hidden", !running);
+  const nextSplit = nextRunnableSplit();
+  if (!running) {
+    startButton.disabled = nextSplit == null;
+    startButton.textContent = nextSplit == null
+      ? "a0 run complete"
+      : `${state.selectedRun?.splits?.[nextSplit]?.status === "not_started" ? "start" : "resume"} ${nextSplit.replaceAll("_", " ")}`;
+  }
   document.getElementById("last-refresh").textContent = `updated ${new Date().toLocaleTimeString()}`;
   document.querySelectorAll("nav a").forEach(link => {
     link.classList.toggle("active", link.dataset.view === state.view);
@@ -360,7 +376,12 @@ async function refresh() {
 startButton.addEventListener("click", async () => {
   startButton.disabled = true;
   try {
-    const result = await api("/api/runs/start", {method:"POST", body:JSON.stringify({run_id:selectedRunId(), split:"evolution"})});
+    const split = nextRunnableSplit();
+    if (!split) {
+      showBanner("Every A0 split is already complete.");
+      return;
+    }
+    const result = await api("/api/runs/start", {method:"POST", body:JSON.stringify({run_id:selectedRunId(), split})});
     showBanner(result.message);
     await refresh();
   } catch (error) { showBanner(error.message, "error"); }
