@@ -39,7 +39,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     # A partially written file is skipped and will appear on
                     # the next browser refresh once the atomic update lands.
                     continue
-                rows.append((run_dir.name, progress_file.parent.name, progress))
+                # Reconcile the heartbeat with the durable response file. This
+                # catches a crash between writing a response and its progress
+                # update, and prevents old runs from appearing live forever.
+                split_dir = progress_file.parent
+                response_file = split_dir / "raw_responses.jsonl"
+                completed = sum(1 for line in response_file.open() if line.strip()) if response_file.exists() else 0
+                progress["completed"] = completed
+                total = int(progress.get("total", 0))
+                progress["percent"] = 100.0 * completed / total if total else 0.0
+                age_seconds = max(time.time() - progress_file.stat().st_mtime, 0.0)
+                progress["age_seconds"] = age_seconds
+                if total and completed >= total:
+                    progress["status"] = "complete"
+                elif age_seconds > 120:
+                    progress["status"] = "stale, interrupted"
+                rows.append((run_dir.name, split_dir.name, progress))
 
         cards = []
         chart_data = []
@@ -70,7 +85,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 <div><label>avg generation</label><strong>{float(data.get('mean_generation_seconds', 0)):.1f}s</strong></div>
                 <div><label>elapsed</label><strong>{float(data.get('elapsed_seconds', 0))/60:.1f} min</strong></div>
               </div>
-              <p class="updated">Updated {html.escape(str(data.get('updated_at', '')))}</p>
+              <p class="updated">Last progress write: {float(data.get('age_seconds', 0)) / 60:.1f} minutes ago | {html.escape(str(data.get('updated_at', '')))}</p>
             </section>""")
 
         content = "\n".join(cards) or '<p class="empty">No active A0 progress found yet. Start the runner and refresh this page.</p>'
