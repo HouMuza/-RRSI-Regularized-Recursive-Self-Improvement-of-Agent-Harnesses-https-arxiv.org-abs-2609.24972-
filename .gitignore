@@ -1,0 +1,30 @@
+# Local credentials and private environment configuration.
+.env
+.env.*
+!.env.example
+secrets/
+
+# Python environments, bytecode, and tool caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local experiment runs and potentially large artifacts.
+mlruns/
+mlartifacts/
+artifacts/
+runs/
+checkpoints/
+models/
+*.log
+*.sqlite
+*.db
+
+# Editor and operating-system files.
+.DS_Store
+.idea/
+.vscode/
