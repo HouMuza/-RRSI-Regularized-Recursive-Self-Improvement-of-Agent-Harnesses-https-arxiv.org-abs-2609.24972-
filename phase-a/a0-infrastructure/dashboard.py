@@ -81,10 +81,27 @@ def start_runner(run_id: str, split: str) -> tuple[bool, str]:
         if not RUNNER.exists() or not PYTHON.exists():
             return False, "The runner or project Python environment is missing."
 
+        run_dir = store.EXPERIMENTS_ROOT / run_id
+        requested_snapshot = store.split_snapshot(run_dir, split) or {}
+        if requested_snapshot.get("status") == "complete":
+            # An already-open browser tab may still submit the previous split
+            # after the dashboard code is updated. Resolve that stale request
+            # to the first unfinished split on the server, where protocol state
+            # is authoritative.
+            split = next(
+                (
+                    candidate
+                    for candidate in allowed_splits
+                    if (store.split_snapshot(run_dir, candidate) or {}).get("status") != "complete"
+                ),
+                "",
+            )
+            if not split:
+                return False, "Every A0 split is already complete."
+
         # Enforce the evaluation sequence in the backend as well as the UI.
         # This prevents an edited browser request from opening held-out data
         # before evolution and validation evidence has been completed.
-        run_dir = store.EXPERIMENTS_ROOT / run_id
         required_predecessors = {
             "evolution": (),
             "validation": ("evolution",),
@@ -186,7 +203,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
         self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-cache")
+        # The console is a local operational tool. Always fetch current UI code
+        # so an open experiment cannot keep obsolete run-control behavior.
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
 
