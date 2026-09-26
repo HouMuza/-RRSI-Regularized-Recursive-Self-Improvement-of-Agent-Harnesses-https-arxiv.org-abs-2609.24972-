@@ -1,0 +1,10 @@
+# Keep the framework and inference stack aligned with the environment used for
+# the local smoke inference. The verifier dependencies are declared by Google.
+torch==2.13.0
+transformers==4.57.6
+accelerate==1.15.0
+absl-py==2.5.0
+langdetect==1.0.9
+nltk==3.10.3
+immutabledict==4.3.1
+huggingface-hub==0.36.2

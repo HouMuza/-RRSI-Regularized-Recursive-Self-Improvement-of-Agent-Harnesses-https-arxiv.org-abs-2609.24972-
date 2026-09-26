@@ -24,6 +24,12 @@ Create a frozen task environment, reproducible data splits, scoring, model
 adapters, mutation lineage, run manifests, raw result storage, and experiment
 tracking. Establish repeatability before any component is allowed to improve.
 
+The starting benchmark is the public IFEval set with its official
+programmatic verifier, and the frozen policy is the locally cached
+Qwen3-0.6B checkpoint. See [`benchmark_selection.md`](benchmark_selection.md)
+for the license, alternatives, and split safeguards. Dataset, evaluator, model,
+split, and runner settings are pinned in the a0 protocol.
+
 **Gate:** a clean baseline run can be reproduced, and the evidence pack contains
 the configuration, data and evaluator fingerprints, per-example results,
 aggregate metrics, cost, and lineage.

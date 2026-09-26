@@ -35,5 +35,18 @@ future interpretation. Add new entries at the top.
 - **Reason:** Isolate whether the improvement and selection loop works before
   adding additional mutation types.
 - **Constraint:** Model, evaluator, data, tools, and runtime are held fixed in
-  a1. Their exact choices are to be recorded during a0.
+  a1. A0 records the exact choices in its checked-in configuration.
+- **Decision owner:** Project owner.
+
+## 2026-09-26: use public IFEval for a0
+
+- **Decision:** Use the Apache 2.0 IFEval dataset, the official Google Research
+  evaluator, and the locally cached Qwen3-0.6B checkpoint for the first
+  baseline. Create deterministic evolution, validation, and held-out test
+  splits at 60/20/20.
+- **Reason:** IFEval provides established programmatic checks for instruction
+  following and avoids executing generated code in the first experiment.
+- **Constraint:** Public benchmark exposure is possible. Keep held-out prompts
+  away from the improver and disclose the limitation. Track progress and live
+  scores through the local a0 dashboard.
 - **Decision owner:** Project owner.
