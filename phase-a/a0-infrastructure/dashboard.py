@@ -1,8 +1,8 @@
-"""Serve a read-only local dashboard for A0's live JSON progress files.
+"""Serve a local dashboard and start or resume A0 runs on request.
 
 The dashboard requires only Python's standard library. It reads artifacts
-written by run_a0.py and refreshes automatically, so no training or inference
-process has to be modified by the web server.
+written by run_a0.py and can launch one local runner process from its start
+button. The runner writes its own progress files, which this page polls.
 """
 
 from __future__ import annotations
@@ -10,13 +10,90 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
+import subprocess
+import sys
+import threading
 import time
+from urllib.parse import parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "runs/a0/experiments"
+RUNNER = ROOT / "phase-a/a0-infrastructure/run_a0.py"
+PYTHON = ROOT / ".venv/bin/python"
+DEFAULT_RUN_ID = "a0-20260926-180736"
+LOCK = threading.Lock()
+ACTIVE_PROCESS: subprocess.Popen[str] | None = None
+ACTIVE_LOG: object | None = None
+
+
+def process_is_running() -> bool:
+    """Refresh the tracked process state and report whether it is still alive."""
+    global ACTIVE_PROCESS
+    with LOCK:
+        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is not None:
+            ACTIVE_PROCESS = None
+        return ACTIVE_PROCESS is not None
+
+
+def any_runner_is_running() -> bool:
+    """Check local processes too, including a runner started before this server."""
+    if process_is_running():
+        return True
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", str(RUNNER)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return any(line.strip().isdigit() and int(line.strip()) != os.getpid()
+               for line in result.stdout.splitlines())
+
+
+def start_runner(split_names: list[str], run_id: str = DEFAULT_RUN_ID) -> tuple[bool, str]:
+    """Start one runner process, logging stdout and stderr into ignored runs/."""
+    global ACTIVE_PROCESS, ACTIVE_LOG
+    with LOCK:
+        if ACTIVE_PROCESS is not None and ACTIVE_PROCESS.poll() is None:
+            return False, "An A0 runner is already active."
+        if any_runner_is_running():
+            return False, "An A0 runner is already active."
+        if not RUNNER.exists():
+            return False, f"Runner file is missing: {RUNNER}"
+        if not PYTHON.exists():
+            return False, f"Project environment is missing: {PYTHON}"
+
+        # Log output outside tracked source so process errors and progress
+        # messages remain inspectable without making the git tree noisy.
+        log_dir = ROOT / "runs/a0/dashboard"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"runner-{int(time.time())}.log"
+        ACTIVE_LOG = log_path.open("a", encoding="utf-8")
+        environment = os.environ.copy()
+        environment.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
+        command = [str(PYTHON), str(RUNNER), "--run-id", run_id, "--splits", *split_names]
+        try:
+            ACTIVE_PROCESS = subprocess.Popen(
+                command,
+                cwd=ROOT,
+                env=environment,
+                stdout=ACTIVE_LOG,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+        except OSError as error:
+            ACTIVE_LOG.close()
+            ACTIVE_LOG = None
+            return False, f"Runner launch failed: {error}"
+        return True, f"A0 runner started for {', '.join(split_names)}. Log: {log_path.relative_to(ROOT)}"
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -27,6 +104,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok")
+            return
+
+        if self.path == "/start":
+            # A state-changing request must not be triggered by a page refresh
+            # or a cross-site image, so launching is only accepted through POST.
+            self.send_error(405, "Use the start form to launch an A0 run")
             return
 
         run_dirs = sorted((path for path in RUNS.glob("a0-*") if path.is_dir()), reverse=True)
@@ -88,7 +171,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
               <p class="updated">Last progress write: {float(data.get('age_seconds', 0)) / 60:.1f} minutes ago | {html.escape(str(data.get('updated_at', '')))}</p>
             </section>""")
 
-        content = "\n".join(cards) or '<p class="empty">No active A0 progress found yet. Start the runner and refresh this page.</p>'
+        running = any_runner_is_running()
+        launch_state = "disabled" if running else ""
+        launch_label = "runner already active" if running else "start or resume a0 run"
+        launch_panel = f"""
+        <section class="launch">
+          <form method="post" action="/start">
+            <label for="run-id">Run</label>
+            <input type="hidden" id="run-id" name="run_id" value="{DEFAULT_RUN_ID}">
+            <input type="hidden" name="split" value="evolution">
+            <button type="submit" {launch_state}>{launch_label}</button>
+          </form>
+          <p id="launch-message" role="status">Choose a split and click to start or resume from saved responses.</p>
+        </section>
+        """
+        content = launch_panel + ("\n".join(cards) or '<p class="empty">No run progress exists yet.</p>')
         chart_payload = json.dumps(chart_data).replace("</", "<\\/")
         page = f"""<!doctype html>
         <html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3">
@@ -112,11 +209,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
           .empty {{ color: #aab6c5; padding: 24px; background: #1a222d; border-radius: 12px; }}
           .chart {{ background: #1a222d; border: 1px solid #2a3746; border-radius: 14px; padding: 16px; margin: 20px 0; }}
           canvas {{ width: 100%; height: 250px; }}
+          .launch {{ background: #1a222d; border: 1px solid #2a3746; border-radius: 14px; padding: 18px; margin: 18px 0; }}
+          .launch form {{ display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }}
+          select, button {{ color: #e7edf5; background: #263344; border: 1px solid #40546a; border-radius: 8px; padding: 10px 14px; font: inherit; }}
+          button {{ background: #23875d; border-color: #36a875; cursor: pointer; font-weight: 650; }}
+          button:disabled {{ background: #3c4652; border-color: #4b5664; cursor: not-allowed; }}
+          #launch-message {{ color: #9aa8b8; margin: 12px 0 0; }}
           @media (max-width: 650px) {{ .grid {{ grid-template-columns: repeat(2, 1fr); }} main {{ padding: 24px 14px; }} }}
         </style></head><body><main><h1>a0 experiment dashboard</h1>
         <p class="intro">Live local status from the frozen Qwen3-0.6B IFEval run. Refreshes every three seconds.</p>
         <section class="chart"><h2>score over time</h2><canvas id="scores" width="900" height="250"></canvas></section>
         {content}
+        <script>
+        const form = document.querySelector('.launch form');
+        form.addEventListener('submit', async event => {{
+          event.preventDefault();
+          const button = form.querySelector('button');
+          const message = document.getElementById('launch-message');
+          button.disabled = true;
+          button.textContent = 'starting…';
+          try {{
+            const response = await fetch('/start', {{method: 'POST', body: new FormData(form)}});
+            const result = await response.json();
+            message.textContent = result.message;
+            message.style.color = result.ok ? '#8bc5a3' : '#f1b85b';
+          }} catch (error) {{
+            message.textContent = 'Could not contact the local dashboard server: ' + error;
+            message.style.color = '#f1b85b';
+          }}
+          setTimeout(() => location.reload(), 1200);
+        }});
+        </script>
         <script>
         const runs = {chart_payload};
         const canvas = document.getElementById('scores');
@@ -140,6 +263,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         payload = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:  # noqa: N802, required by the stdlib server API
+        """Accept the dashboard start button and launch only known A0 splits."""
+        if self.path != "/start":
+            self.send_error(404)
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length > 4096:
+                raise ValueError("Request form is too large")
+            form_data = self.rfile.read(content_length).decode("utf-8")
+            fields = parse_qs(form_data)
+            split_name = fields.get("split", ["evolution"])[0]
+            if split_name != "evolution":
+                raise ValueError("Dashboard launch is currently limited to the evolution split")
+            run_id = fields.get("run_id", [""])[0]
+            if run_id != DEFAULT_RUN_ID:
+                raise ValueError("Unknown run selection")
+            started, message = start_runner([split_name], run_id)
+            payload = json.dumps({"ok": started, "message": message}).encode("utf-8")
+            self.send_response(200 if started else 409)
+        except (UnicodeDecodeError, ValueError) as error:
+            payload = json.dumps({"ok": False, "message": str(error)}).encode("utf-8")
+            self.send_response(400)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)

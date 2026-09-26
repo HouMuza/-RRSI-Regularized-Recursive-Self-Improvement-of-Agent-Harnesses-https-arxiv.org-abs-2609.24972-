@@ -372,6 +372,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--splits", nargs="+", choices=("evolution", "validation", "heldout_test"), default=["evolution", "validation", "heldout_test"])
+    parser.add_argument("--run-id", help="Resume or create this exact local run id")
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     global ACTIVE_CONFIG
@@ -398,7 +399,11 @@ def main() -> None:
     # Reuse the active run created before an interruption so existing
     # completed responses can be resumed instead of silently discarded.
     prior_runs = sorted((ROOT / "runs/a0/experiments").glob("a0-*"), reverse=True)
-    run_id = prior_runs[0].name if prior_runs and not (prior_runs[0] / "summary.json").exists() else time.strftime("a0-%Y%m%d-%H%M%S")
+    run_id = args.run_id or (
+        prior_runs[0].name
+        if prior_runs and not (prior_runs[0] / "summary.json").exists()
+        else time.strftime("a0-%Y%m%d-%H%M%S")
+    )
     run_dir = ROOT / "runs/a0/experiments" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     split_manifest = {

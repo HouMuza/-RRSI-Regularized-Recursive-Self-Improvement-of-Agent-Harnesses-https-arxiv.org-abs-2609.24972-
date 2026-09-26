@@ -63,7 +63,10 @@ complete.
 Install the isolated dependencies from this directory's `requirements.txt`,
 then start the dashboard with `python dashboard.py` and open
 `http://127.0.0.1:8765`. In a second
-terminal, run `python run_a0.py`. The checked-in `config.json` pins the
+terminal, run `python run_a0.py`. Or click **start or resume a0 run** in the
+dashboard to continue the saved baseline. The button launches the selected
+split, refuses a duplicate local runner, and writes process output to an ignored
+log under `runs/a0/dashboard/`. The checked-in `config.json` pins the
 dataset, verifier, local model snapshot, greedy decoding settings, split seed,
 and proportions. Each invocation creates or resumes a local run directory under
 `runs/a0/experiments/` with split memberships, raw responses, official strict
