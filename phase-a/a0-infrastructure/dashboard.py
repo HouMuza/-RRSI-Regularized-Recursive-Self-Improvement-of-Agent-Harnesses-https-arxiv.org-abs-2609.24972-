@@ -219,6 +219,89 @@ def a1_snapshot() -> dict[str, Any]:
     return {"config": config, "runs": runs, "control": reconcile_process()}
 
 
+def a1_candidate_detail(run_id: str, candidate_id: str, stage: str) -> dict[str, Any] | None:
+    """Return reviewable prompt lineage and per-example verifier evidence.
+
+    Candidate detail is loaded on demand because response bodies and official
+    verifier records are much larger than the overview payload. Every path is
+    resolved beneath the selected experiment directory before it is read.
+    Held-out prompt text remains sealed from the development dashboard.
+    """
+    experiments_root = (A1_RUNS_ROOT / "experiments").resolve()
+    run_root = (experiments_root / run_id).resolve()
+    candidate_root = (run_root / "candidates" / candidate_id).resolve()
+    evaluation_root = (candidate_root / "evaluations" / stage).resolve()
+    if (
+        not run_root.is_dir()
+        or run_root.parent != experiments_root
+        or candidate_root.parent != run_root / "candidates"
+        or evaluation_root.parent != candidate_root / "evaluations"
+    ):
+        return None
+    candidate = store.read_json(candidate_root / "candidate.json", {})
+    if not candidate:
+        return None
+
+    # Held-out examples may report aggregate evidence, but their prompts and
+    # responses must never enter the development view used to improve prompts.
+    if stage in {"heldout-test", "heldout_test"}:
+        return {
+            "candidate": candidate,
+            "stage": stage,
+            "sealed": True,
+            "metrics": store.read_json(evaluation_root / "metrics.json", {}),
+            "examples": [],
+        }
+
+    responses = store.read_jsonl(evaluation_root / "raw_responses.jsonl")
+    if not responses:
+        responses = store.read_jsonl(evaluation_root / "responses_for_official_evaluator.jsonl")
+    strict_by_prompt = {
+        item.get("prompt"): item
+        for item in store.read_jsonl(evaluation_root / "eval_results_strict.jsonl")
+    }
+    loose_by_prompt = {
+        item.get("prompt"): item
+        for item in store.read_jsonl(evaluation_root / "eval_results_loose.jsonl")
+    }
+    examples = []
+    for position, response in enumerate(responses, start=1):
+        prompt = response.get("prompt", "")
+        strict = strict_by_prompt.get(prompt, {})
+        loose = loose_by_prompt.get(prompt, {})
+        examples.append({
+            "position": position,
+            "key": response.get("key") or f"example-{position}",
+            "prompt": prompt,
+            "response": response.get("response", ""),
+            "generation_seconds": response.get("generation_seconds"),
+            "input_tokens": response.get("input_tokens"),
+            "output_tokens": response.get("output_tokens"),
+            "strict_pass": strict.get("follow_all_instructions"),
+            "strict_checks": strict.get("follow_instruction_list", []),
+            "instruction_ids": strict.get("instruction_id_list", []),
+            "loose_pass": loose.get("follow_all_instructions"),
+        })
+    return {
+        "candidate": candidate,
+        "stage": stage,
+        "sealed": False,
+        "metrics": store.read_json(evaluation_root / "metrics.json", {}),
+        "examples": examples,
+        "validator": {
+            "name": "official deterministic IFEval verifier",
+            "output": "one pass or fail value for each requested instruction",
+            "natural_language_advice": False,
+        },
+        "proposal": {
+            "source": "predefined deterministic mutation operator",
+            "rationale": candidate.get("rationale", ""),
+            "operators": candidate.get("operators", []),
+            "uses_validator_feedback": False,
+        },
+    }
+
+
 def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
     """Launch one resumable A1 protocol stage under the shared process guard."""
     global ACTIVE_PROCESS, ACTIVE_LOG
@@ -404,6 +487,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/a1":
             self.send_json(a1_snapshot())
+            return
+        if path == "/api/a1/candidate":
+            detail = a1_candidate_detail(
+                query.get("run_id", [""])[0],
+                query.get("candidate_id", [""])[0],
+                query.get("stage", [""])[0],
+            )
+            self.send_json(detail or {"error": "Candidate evaluation not found"}, 200 if detail else 404)
             return
         if path == "/api/artifact":
             self.serve_artifact(

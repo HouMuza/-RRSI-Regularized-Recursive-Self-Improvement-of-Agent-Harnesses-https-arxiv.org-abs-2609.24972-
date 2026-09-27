@@ -109,6 +109,8 @@ textarea { width: 100%; min-height: 88px; resize: vertical; }
 .check .icon { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; background: #fcebed; color: var(--red); }
 .check.passed .icon { background: var(--green-soft); color: var(--green); }
 .example-row td:first-child { width: 72px; }
+.drilldown-row { cursor: pointer; }
+.drilldown-row:hover td { background: #edf4ff; }
 .truncate { max-width: 560px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .checks { display: flex; flex-wrap: wrap; gap: 6px; }
 .check-chip { border-radius: 5px; padding: 3px 6px; font-size: 10px; background: #fcebed; color: #a62f39; }
@@ -117,6 +119,13 @@ dialog { width: min(920px, calc(100vw - 38px)); max-height: 88vh; background: va
 dialog::backdrop { background: rgba(37,32,43,.35); }
 .dialog-close { position: absolute; right: 13px; top: 10px; border: 0; background: transparent; color: var(--muted); font-size: 25px; cursor: pointer; }
 .response-block { white-space: pre-wrap; background: var(--panel-3); border: 1px solid var(--line-soft); border-radius: 9px; padding: 14px; max-height: 340px; overflow: auto; }
+.diff-block { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+.candidate-example-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 8px; }
+.candidate-example { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); cursor: pointer; text-align: left; }
+.candidate-example:hover { border-color: var(--blue); background: #edf4ff; }
+.candidate-example.passed { border-left: 4px solid var(--green); }
+.candidate-example.failed { border-left: 4px solid #c54747; }
+.candidate-example.pending { border-left: 4px solid #9b99a2; }
 .artifact-hash { font: 10px ui-monospace, monospace; color: var(--faint); word-break: break-all; }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }

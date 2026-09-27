@@ -320,6 +320,52 @@ function openExample(example) {
   dialog.showModal();
 }
 
+function a1ExampleEvidence(example) {
+  // A running evaluation has generated responses before the official verifier
+  // writes its result files. Represent that state directly instead of treating
+  // an absent result as a failure.
+  const checks = example.instruction_ids.length
+    ? example.instruction_ids.map((id, index) => `<span class="check-chip ${example.strict_checks[index] ? "pass" : ""}">${escapeHtml(id)}: ${example.strict_checks[index] ? "pass" : "fail"}</span>`).join("")
+    : `<span class="muted">Verifier result pending for this response.</span>`;
+  const outcome = example.strict_pass == null ? "validation pending" : example.strict_pass ? "strict pass" : "strict failure";
+  return `<p class="eyebrow">example ${escapeHtml(example.key)}</p><h2>${outcome}</h2><div class="checks">${checks}</div><h3 class="section">user prompt</h3><div class="response-block">${escapeHtml(example.prompt)}</div><h3 class="section">model response</h3><div class="response-block">${escapeHtml(example.response)}</div><div class="grid kpis section">${kpi("latency", example.generation_seconds == null ? "pending" : `${Number(example.generation_seconds).toFixed(1)}s`)}${kpi("input tokens", example.input_tokens ?? "pending")}${kpi("output tokens", example.output_tokens ?? "pending")}${kpi("loose result", example.loose_pass == null ? "pending" : example.loose_pass ? "pass" : "fail")}</div>`;
+}
+
+async function openA1Candidate(runId, candidateId, stage) {
+  dialog.querySelector("#example-detail").innerHTML = `<div class="loading">loading candidate evidence…</div>`;
+  dialog.showModal();
+  try {
+    const detail = await api(`/api/a1/candidate?run_id=${encodeURIComponent(runId)}&candidate_id=${encodeURIComponent(candidateId)}&stage=${encodeURIComponent(stage)}`);
+    const candidate = detail.candidate || {};
+    if (detail.sealed) {
+      dialog.querySelector("#example-detail").innerHTML = `<p class="eyebrow">${escapeHtml(candidateId)} · ${escapeHtml(stage)}</p><h2>held-out evidence is sealed</h2><p class="muted">Only aggregate held-out metrics are exposed. Prompt text and model responses remain unavailable to prompt development.</p>`;
+      return;
+    }
+    const examples = detail.examples || [];
+    const strict = detail.metrics?.strict || {};
+    dialog.querySelector("#example-detail").innerHTML = `
+      <p class="eyebrow">candidate drilldown · ${escapeHtml(stage)}</p>
+      <h2>${escapeHtml(candidate.candidate_id)}</h2>
+      <div class="grid kpis section">
+        ${kpi("strict prompt", formatPercent(strict.prompt_accuracy), `${examples.length} responses available`)}
+        ${kpi("mutation", (candidate.operators || []).join(", ") || "baseline", `${candidate.added_words || 0} words added`)}
+        ${kpi("validator", "deterministic", "official IFEval checks")}
+        ${kpi("written advice", "none", "pass or fail signals only")}
+      </div>
+      <div class="banner info section"><strong>What produced this candidate:</strong> ${escapeHtml(detail.proposal?.rationale || "This is the frozen baseline prompt.")} ${detail.proposal?.uses_validator_feedback ? "Validator feedback was used." : "This mutation was predefined and did not use validator feedback."}</div>
+      <h3 class="section">candidate system prompt</h3><div class="response-block">${escapeHtml(candidate.prompt || "")}</div>
+      <h3 class="section">change from parent</h3><div class="response-block diff-block">${escapeHtml(candidate.diff || "No prompt change. This is the baseline.")}</div>
+      <div class="card-head section"><h3>individual responses and checks</h3><span class="muted">select an example to inspect the exact verifier target</span></div>
+      <div class="candidate-example-list">${examples.length ? examples.map((example, index) => `<button class="candidate-example ${example.strict_pass === true ? "passed" : example.strict_pass === false ? "failed" : "pending"}" data-a1-example="${index}"><span class="run-id">${escapeHtml(example.key)}</span><span>${example.strict_pass == null ? "validator pending" : example.strict_pass ? "strict pass" : "strict failure"}</span></button>`).join("") : `<div class="empty">No responses have been generated for this stage yet.</div>`}</div>
+      <div id="a1-example-evidence" class="section">${examples.length ? a1ExampleEvidence(examples[0]) : ""}</div>`;
+    dialog.querySelectorAll("[data-a1-example]").forEach(button => button.addEventListener("click", () => {
+      dialog.querySelector("#a1-example-evidence").innerHTML = a1ExampleEvidence(examples[Number(button.dataset.a1Example)]);
+    }));
+  } catch (error) {
+    dialog.querySelector("#example-detail").innerHTML = `<div class="banner error">Could not load candidate evidence: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function renderCompare() {
   const runs = state.overview?.runs || [];
   const options = runs.map(run => `<option value="${escapeHtml(run.run_id)}">${escapeHtml(run.run_id)}</option>`).join("");
@@ -405,7 +451,7 @@ function renderA1() {
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
     ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? "evolution is active" : runningThisRun ? "candidate complete · next candidate starting" : "latest candidate evaluation"}</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} examples</strong><span>${(activity.percent || 0).toFixed(1)}%</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next candidate is still to run" : "evaluation complete"}</span></div></div>` : ""}
-    ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>${evaluationInProgress ? "live" : "latest"} candidate quality</h2><span class="muted">${evaluationInProgress ? "updates as verifier checkpoints complete" : "remains visible while the next candidate starts"}</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}</div><div class="card"><div class="card-head"><h2>generation ${activeGeneration} leaderboard</h2><span class="muted">${stageLabel} scores</span></div><table><thead><tr><th>candidate</th><th>progress</th><th>strict prompt</th><th>strict instruction</th></tr></thead><tbody>${generationCandidates.map(item => `<tr><td class="run-id">${escapeHtml(item.candidate.candidate_id)}</td><td>${item.evaluation ? `${item.evaluation.completed}/${item.evaluation.total}` : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_prompt_accuracy) : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_instruction_accuracy) : "still to run"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>${evaluationInProgress ? "live" : "latest"} candidate quality</h2><span class="muted">${evaluationInProgress ? "updates as verifier checkpoints complete" : "remains visible while the next candidate starts"}</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}</div><div class="card"><div class="card-head"><h2>generation ${activeGeneration} leaderboard</h2><span class="muted">click an evaluated candidate to inspect evidence</span></div><table><thead><tr><th>candidate</th><th>progress</th><th>strict prompt</th><th>strict instruction</th></tr></thead><tbody>${generationCandidates.map(item => `<tr ${item.evaluation ? `class="drilldown-row" data-a1-candidate="${escapeHtml(item.candidate.candidate_id)}" data-a1-stage="${escapeHtml(item.evaluation.stage)}"` : ""}><td class="run-id">${escapeHtml(item.candidate.candidate_id)}</td><td>${item.evaluation ? `${item.evaluation.completed}/${item.evaluation.total}` : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_prompt_accuracy) : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_instruction_accuracy) : "still to run"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     ${completedDecisions.length ? `<div class="card section"><div class="card-head"><h2>incumbent trajectory</h2><span class="muted">paired confirmation deltas</span></div><div class="trajectory-bars">${completedDecisions.map(item => `<div class="trajectory-row"><span>generation ${item.generation}</span><div class="trajectory-track"><span class="${item.strict_prompt_delta >= 0 ? "positive" : "negative"}" style="width:${Math.min(Math.abs(item.strict_prompt_delta || 0) * 500, 100)}%"></span></div><strong class="${item.strict_prompt_delta > 0 ? "metric-positive" : item.strict_prompt_delta < 0 ? "metric-negative" : "metric-neutral"}">${signedPercent(item.strict_prompt_delta)}</strong><span>${item.accepted ? "accepted" : "rejected"}</span></div>`).join("")}</div></div>` : ""}
     <div class="grid main-side">
       <div class="card">
@@ -432,7 +478,7 @@ function renderA1() {
       <div class="card flush">
         <div class="card-head" style="padding:16px;margin:0"><h2>candidate ledger</h2><span class="muted">${candidates.length} candidates recorded</span></div>
         <table><thead><tr><th>candidate</th><th>parent</th><th>generation</th><th>status</th><th>prompt words</th><th>evaluations</th></tr></thead><tbody>
-          ${candidates.length ? candidates.map(candidate => { const latest = candidate.evaluations?.at(-1); return `<tr><td class="run-id">${escapeHtml(candidate.candidate_id)}</td><td class="run-id">${escapeHtml(candidate.parent_id || "root")}</td><td>${escapeHtml(candidate.generation)}</td><td>${statusBadge(candidate.status)}</td><td>${escapeHtml(candidate.prompt_words || 0)}</td><td>${latest ? `${escapeHtml(latest.stage)} · ${latest.completed || 0}/${latest.total || 0}` : "still to run"}</td></tr>`; }).join("") : `<tr><td colspan="6" class="empty">Candidates appear when search starts.</td></tr>`}
+          ${candidates.length ? candidates.map(candidate => { const latest = candidate.evaluations?.at(-1); return `<tr ${latest ? `class="drilldown-row" data-a1-candidate="${escapeHtml(candidate.candidate_id)}" data-a1-stage="${escapeHtml(latest.stage)}"` : ""}><td class="run-id">${escapeHtml(candidate.candidate_id)}</td><td class="run-id">${escapeHtml(candidate.parent_id || "root")}</td><td>${escapeHtml(candidate.generation)}</td><td>${statusBadge(candidate.status)}</td><td>${escapeHtml(candidate.prompt_words || 0)}</td><td>${latest ? `${escapeHtml(latest.stage)} · ${latest.completed || 0}/${latest.total || 0}` : "still to run"}</td></tr>`; }).join("") : `<tr><td colspan="6" class="empty">Candidates appear when search starts.</td></tr>`}
         </tbody></table>
       </div>
       <div class="card">
@@ -449,6 +495,9 @@ function renderA1() {
       await refresh();
     } catch (error) { showBanner(error.message, "error"); event.currentTarget.disabled = false; }
   });
+  document.querySelectorAll("[data-a1-candidate]").forEach(row => row.addEventListener("click", () => {
+    openA1Candidate(run.run_id, row.dataset.a1Candidate, row.dataset.a1Stage);
+  }));
 }
 
 function bindNavigationButtons() {
