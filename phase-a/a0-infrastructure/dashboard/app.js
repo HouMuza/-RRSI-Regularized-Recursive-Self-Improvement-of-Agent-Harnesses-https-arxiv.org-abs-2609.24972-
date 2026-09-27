@@ -597,6 +597,32 @@ function closeRunComparisonDrawer() {
   document.body.classList.remove("drawer-open");
 }
 
+
+/* Keep every screen candidate visible while the generation advances. The live
+ * candidate is explicitly marked partial and completed candidates retain their
+ * final score, so the current panel never erases earlier evidence. */
+function generationScreenChart(records, parentScore, activeCandidateId) {
+  const width = 820, height = 250, left = 145, right = 82, top = 24, rowHeight = 48;
+  const chartWidth = width - left - right;
+  const x = value => left + Math.max(0, Math.min(1, Number(value || 0))) * chartWidth;
+  const parentX = x(parentScore);
+  const rows = records.map((record, index) => {
+    const candidate = record.candidate;
+    const evaluation = record.evaluation;
+    const cy = top + index * rowHeight + 15;
+    const score = evaluation?.strict_prompt_accuracy;
+    const complete = evaluation?.status === "complete";
+    const active = candidate.candidate_id === activeCandidateId;
+    const stateLabel = complete ? "final" : active ? "live" : evaluation ? "partial" : "still to run";
+    const bar = score == null
+      ? `<line x1="${left}" y1="${cy}" x2="${width-right}" y2="${cy}" stroke="#ececf1" stroke-width="12"/>`
+      : `<line x1="${left}" y1="${cy}" x2="${x(score)}" y2="${cy}" stroke="${complete ? "#1456a0" : "#d97706"}" stroke-width="12"/><circle cx="${x(score)}" cy="${cy}" r="5" fill="${complete ? "#1456a0" : "#d97706"}"/>`;
+    const valueLabel = score == null ? stateLabel : `${formatPercent(score)} · ${stateLabel}`;
+    return `<g><text x="${left-12}" y="${cy+4}" text-anchor="end" fill="#3f3c46" font-size="12" font-weight="650">${escapeHtml(candidate.candidate_id)}</text>${bar}<text x="${width-right+10}" y="${cy+4}" fill="${complete ? "#1456a0" : active ? "#a66b08" : "#686572"}" font-size="11">${escapeHtml(valueLabel)}</text></g>`;
+  }).join("");
+  return `<svg class="generation-screen-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="All generation screening candidate scores"><line x1="${parentX}" y1="${top-10}" x2="${parentX}" y2="${top + records.length*rowHeight-15}" stroke="#16855b" stroke-width="2" stroke-dasharray="5 5"/><text x="${parentX}" y="${height-14}" text-anchor="middle" fill="#16855b" font-size="10">parent ${formatPercent(parentScore)}</text>${rows}</svg>`;
+}
+
 function renderA1() {
   const data = state.a1 || {};
   const config = data.config || {};
@@ -641,7 +667,7 @@ function renderA1() {
   const generationCandidates = candidates
     .filter(candidate => candidate.generation === activeGeneration)
     .map(candidate => ({candidate, evaluation: [...(candidate.evaluations || [])].reverse().find(item => item.stage === activity?.stage)}))
-    .sort((left, right) => (right.evaluation?.strict_prompt_accuracy ?? -1) - (left.evaluation?.strict_prompt_accuracy ?? -1));
+    .sort((left, right) => left.candidate.candidate_id.localeCompare(right.candidate.candidate_id));
   const completedDecisions = run?.decisions || [];
   // Candidate files use a single `rejected` state after a generation closes.
   // That state is correct for the search runner, but it hides two materially
@@ -851,6 +877,7 @@ function renderA1() {
     </div>
     ${activity && showActiveEvaluation ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? `${finalSplit ? finalSplit.replaceAll("_", " ") : "evolution"} is active` : runningThisRun ? "evaluation complete · next comparison starting" : "latest evaluation"}</p><h2>${finalSplit ? `${finalSplit.replaceAll("_", " ")} · ${measuringParent ? "baseline" : "selected prompt"}` : `generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${activeRunLabel}`}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : `This is a frozen ${finalSplit?.replaceAll("_", " ") || "final"} measurement. It cannot select or modify a prompt.`}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next comparison is still to run" : "evaluation complete"}</span></div></div>` : ""}
     ${activity && showActiveEvaluation ? `<div class="card section"><div class="card-head"><div><h2>live candidate checkpoints</h2><p class="muted">${escapeHtml(activity.candidate_id)} updates as new responses are verified</p></div><span class="live-indicator">${evaluationInProgress ? "● live" : "final"}</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}<p class="chart-note">Blue is the metric used to select a prompt. Green shows instruction-level accuracy. Orange is the format-tolerant upper bound. These lines can move until the candidate finishes.</p></div>` : ""}
+    ${activity && showSearch && stageLabel === "screening" ? `<div class="card section generation-screen"><div class="card-head"><div><h2>generation ${activeGeneration} screening results</h2><p class="muted">completed candidates stay visible while the remaining candidates run</p></div><span class="muted">${generationCandidates.filter(record => record.evaluation?.status === "complete").length} of ${search.candidates_per_generation || 4} final</span></div>${generationScreenChart(generationCandidates, parentEvaluation?.strict_prompt_accuracy, activity.candidate_id)}<div class="screen-legend"><span class="final">final screen score</span><span class="live">live partial score</span><span class="parent">parent score to beat</span></div><p class="chart-note">Candidate 1 remains here with its final 32 example result. Orange is the candidate currently being scored. The two highest final scores advance only after all four screens finish.</p></div>` : ""}
     ${activity && showSearch ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>improvement across generations</h2><span class="muted">solid points are final · orange is live</span></div>${generationProgressChart(generationHistory, generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}<div class="generation-history"><div class="history-row history-head"><span>stage</span><span>candidate</span><span>score</span><span>parent</span><span>change</span><span>decision</span></div><div class="history-row"><strong>baseline</strong><span class="run-id">a0-baseline</span><strong>${formatPercent(generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}</strong><span>reference</span><span>0.0 pp</span><span>starting prompt</span></div>${generationHistory.map(item => `<div class="history-row ${item.provisional ? "provisional" : ""}"><strong>generation ${item.generation}</strong><span class="run-id">${escapeHtml(item.candidateId)}</span><strong>${formatPercent(item.candidateScore)}</strong><span>${formatPercent(item.parentScore)}</span><span class="${item.delta > 0 ? "metric-positive" : item.delta < 0 ? "metric-negative" : "metric-neutral"}">${item.delta == null ? "too early" : signedPercent(item.delta)}${item.provisional ? " partial" : ""}</span><span>${escapeHtml(item.outcome)}</span></div>`).join("")}</div><p class="chart-note">A point above the dashed baseline is an improvement. A point below it is a regression. The live point can move until all 96 examples are scored.</p></div><div class="card"><div class="card-head"><h2>all confirmation runs</h2><span class="muted">every finalist, across every generation</span></div><table><thead><tr><th>generation</th><th>candidate</th><th>evidence</th><th>score</th><th>versus parent</th></tr></thead><tbody>${confirmationCandidates.map(record => `<tr class="drilldown-row" data-a1-candidate="${escapeHtml(record.candidate.candidate_id)}" data-a1-stage="${escapeHtml(record.item.stage)}"><td>${record.generation}</td><td><span class="run-id">${escapeHtml(record.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(record.candidate.rationale || "Prompt revision")}</small></td><td>${record.item.scored_examples || record.item.completed || 0}/${record.item.total || 0}${record.item.status === "complete" ? " final" : " partial"}</td><td>${formatPercent(record.item.strict_prompt_accuracy)}</td><td class="${record.delta > 0 ? "metric-positive" : record.delta < 0 ? "metric-negative" : "metric-neutral"}">${record.delta == null ? "pending" : signedPercent(record.delta)}${record.item.status === "complete" ? "" : " partial"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="${showSearch ? "" : "hidden"}">
     <div class="card section">
