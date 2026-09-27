@@ -175,9 +175,15 @@ def a1_snapshot() -> dict[str, Any]:
                     "status": "complete" if metrics else "running" if completed else "queued",
                     "completed": completed,
                     "total": total,
+                    # Expose the actual verifier denominator separately from
+                    # generated responses. Live scoring runs at checkpoints,
+                    # so 27 generated examples may still mean 20 scored ones.
+                    "scored_examples": metrics.get("strict", {}).get("prompt_total", progress.get("scored_examples", 0)),
                     "percent": 100 * completed / total if total else 0,
                     "strict_prompt_accuracy": metrics.get("strict", {}).get("prompt_accuracy", progress.get("strict_prompt_accuracy")),
+                    "strict_prompt_correct": metrics.get("strict", {}).get("prompt_correct", progress.get("strict_prompt_correct")),
                     "strict_instruction_accuracy": metrics.get("strict", {}).get("instruction_accuracy", progress.get("strict_instruction_accuracy")),
+                    "loose_prompt_accuracy": metrics.get("loose", {}).get("prompt_accuracy", progress.get("loose_prompt_accuracy")),
                     "examples_per_second": progress.get("examples_per_second"),
                     "eta_seconds": (max(total - completed, 0) / progress["examples_per_second"]) if progress.get("examples_per_second") else None,
                     "updated_at": progress.get("updated_at"),
