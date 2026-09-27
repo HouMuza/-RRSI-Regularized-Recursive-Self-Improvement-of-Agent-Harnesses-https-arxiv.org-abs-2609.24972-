@@ -447,6 +447,12 @@ def main() -> None:
     # configuration. A1 must not introduce a new split by accident.
     a0.ACTIVE_CONFIG = a0_config
     rows = a0.stratified_split(a0.load_rows(source), config["locked"]["split_seed"])
+    # A0 adds this runtime field immediately after splitting because response
+    # records include their split for provenance. Reproduce the same adapter
+    # contract before passing any A1 panel to the frozen A0 generator.
+    for split_name, split_rows in rows.items():
+        for row in split_rows:
+            row["split"] = split_name
     run_dir = RUNS_ROOT / "experiments" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
@@ -471,6 +477,16 @@ def main() -> None:
         mlflow.end_run(status="FINISHED")
         print(f"A1 {args.stage} artifacts saved to {run_dir.relative_to(ROOT)}")
     except BaseException as error:
+        if args.stage == "search":
+            search_state_path = run_dir / "search_state.json"
+            search_state = read_json(search_state_path, {})
+            search_state.update({
+                "status": "interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
+                "error_type": type(error).__name__,
+                "error": str(error),
+                "failed_at": utc_now(),
+            })
+            write_json(search_state_path, search_state)
         mlflow.set_tag("rrsi.error_type", type(error).__name__)
         mlflow.set_tag("rrsi.error", str(error)[:1000])
         mlflow.end_run(status="KILLED" if isinstance(error, KeyboardInterrupt) else "FAILED")
