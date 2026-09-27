@@ -36,9 +36,9 @@ a:hover { text-decoration: underline; }
 .brand strong { font-size: 16px; letter-spacing: .01em; }
 .brand small { color: var(--muted); margin-top: 2px; font-size: 11px; }
 nav { display: grid; gap: 5px; }
-nav a { padding: 9px 11px; border-radius: 5px; color: #4f4c57; font-weight: 560; border-left: 3px solid transparent; }
+nav a { padding: 9px 11px; border-radius: 5px; color: #4f4c57; font-weight: 560; }
 nav a:hover { color: var(--purple); background: var(--panel-2); text-decoration: none; }
-nav a.active { color: #104a8c; background: #e9f1fa; border-left-color: var(--purple); }
+nav a.active { color: #104a8c; background: #e9f1fa; }
 .sidebar-foot { margin-top: auto; padding: 12px 8px; color: var(--muted); font-size: 11px; display: flex; gap: 8px; align-items: center; }
 .pulse { width: 8px; height: 8px; background: var(--faint); border-radius: 50%; }
 .pulse.running { background: var(--green); box-shadow: 0 0 0 5px rgba(84, 213, 154, .09); }
