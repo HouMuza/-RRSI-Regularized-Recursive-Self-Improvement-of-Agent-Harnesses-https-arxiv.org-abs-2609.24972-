@@ -152,11 +152,13 @@ def start_runner(run_id: str, split: str) -> tuple[bool, str]:
 def a1_snapshot() -> dict[str, Any]:
     """Summarize A1 protocol, candidates, decisions, and comparisons."""
     config = store.read_json(ROOT / "phase-a/a1-prompt-evolution/config.json", {})
+    deepseek_config = store.read_json(ROOT / "phase-a/a1-prompt-evolution/deepseek_config.json", {})
     experiments = A1_RUNS_ROOT / "experiments"
     run_dirs = sorted((path for path in experiments.glob("a1-*") if path.is_dir()), reverse=True) if experiments.exists() else []
     runs = []
     for run_dir in run_dirs:
         state = store.read_json(run_dir / "search_state.json", {})
+        manifest = store.read_json(run_dir / "manifest.json", {})
         candidates = []
         for path in sorted((run_dir / "candidates").glob("*/candidate.json")) if (run_dir / "candidates").exists() else []:
             candidate = store.read_json(path, {})
@@ -213,6 +215,7 @@ def a1_snapshot() -> dict[str, Any]:
         active_evaluations = [item for item in all_evaluations if item.get("status") == "running"]
         runs.append({
             "run_id": run_dir.name,
+            "proposer": manifest.get("proposer", state.get("proposer", "deterministic")),
             "state": state,
             "candidates": candidates,
             "decisions": decisions,
@@ -222,7 +225,21 @@ def a1_snapshot() -> dict[str, Any]:
             "active_evaluation": active_evaluations[0] if active_evaluations else None,
             "latest_evaluation": all_evaluations[0] if all_evaluations else None,
         })
-    return {"config": config, "runs": runs, "control": reconcile_process()}
+    key_name = str(deepseek_config.get("api_key_environment_variable") or "DEEPSEEK_API_KEY")
+    return {
+        "config": config,
+        "runs": runs,
+        "control": reconcile_process(),
+        "proposers": {
+            "deterministic": {"configured": True, "role": "control"},
+            "deepseek": {
+                "configured": bool(os.environ.get(key_name)),
+                "role": "improver",
+                "model": deepseek_config.get("model"),
+                "api_key_environment_variable": key_name,
+            },
+        },
+    }
 
 
 def a1_candidate_detail(run_id: str, candidate_id: str, stage: str) -> dict[str, Any] | None:
@@ -308,7 +325,7 @@ def a1_candidate_detail(run_id: str, candidate_id: str, stage: str) -> dict[str,
     }
 
 
-def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
+def start_a1_runner(run_id: str | None, stage: str, proposer: str | None = None) -> tuple[bool, str, str]:
     """Launch one resumable A1 protocol stage under the shared process guard."""
     global ACTIVE_PROCESS, ACTIVE_LOG
     with PROCESS_LOCK:
@@ -317,6 +334,8 @@ def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
             return False, f"Runner {current.get('pid')} is already active.", str(run_id or "")
         if stage not in {"search", "validation", "heldout_test"}:
             return False, "The requested A1 stage is invalid.", str(run_id or "")
+        if proposer not in {None, "deterministic", "deepseek"}:
+            return False, "The requested A1 proposer is invalid.", str(run_id or "")
         if not run_id:
             run_id = datetime.datetime.now().strftime("a1-%Y%m%d-%H%M%S")
         normalized = run_id.removeprefix("a1-").replace("-", "")
@@ -329,6 +348,12 @@ def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
         # than trusting the browser. This keeps validation and held-out data
         # outside candidate selection even when an old tab submits stale data.
         run_dir = A1_RUNS_ROOT / "experiments" / run_id
+        manifest = store.read_json(run_dir / "manifest.json", {})
+        proposer = proposer or manifest.get("proposer") or "deterministic"
+        if manifest and manifest.get("proposer", "deterministic") != proposer:
+            return False, "A run cannot resume with a different proposer.", run_id
+        if proposer == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
+            return False, "DEEPSEEK_API_KEY is not configured in the dashboard process.", run_id
         state = store.read_json(run_dir / "search_state.json", {})
         comparisons_dir = run_dir / "comparisons"
         expected_stage = "search"
@@ -342,7 +367,7 @@ def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{run_id}-{stage}-{int(time.time())}.log"
         ACTIVE_LOG = log_path.open("a", encoding="utf-8")
-        command = [str(PYTHON), str(A1_RUNNER), "--run-id", run_id, "--stage", stage]
+        command = [str(PYTHON), str(A1_RUNNER), "--run-id", run_id, "--stage", stage, "--proposer", proposer]
         environment = os.environ.copy()
         environment.setdefault("NLTK_DATA", str(store.RUNS_ROOT / "nltk_data"))
         try:
@@ -352,7 +377,7 @@ def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
             ACTIVE_LOG = None
             return False, f"Could not launch the A1 runner: {error}", run_id
         control = {
-            "pid": ACTIVE_PROCESS.pid, "run_id": run_id, "phase": "a1", "stage": stage,
+            "pid": ACTIVE_PROCESS.pid, "run_id": run_id, "phase": "a1", "stage": stage, "proposer": proposer,
             "status": "running", "alive": True, "started_at": utc_now(),
             "log_path": str(log_path.relative_to(ROOT)), "command": command,
         }
@@ -527,7 +552,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if self.path == "/api/a1/start":
                 run_id = str(body.get("run_id") or "") or None
                 stage = str(body.get("stage") or "search")
-                ok, message, resolved_run_id = start_a1_runner(run_id, stage)
+                proposer = str(body.get("proposer") or "") or None
+                ok, message, resolved_run_id = start_a1_runner(run_id, stage, proposer)
                 self.send_json({"ok": ok, "message": message, "run_id": resolved_run_id, "control": reconcile_process()}, 200 if ok else 409)
                 return
             if self.path == "/api/gate":

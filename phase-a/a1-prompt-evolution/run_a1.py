@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 A0_CODE = ROOT / "phase-a/a0-infrastructure"
 A1_ROOT = ROOT / "phase-a/a1-prompt-evolution"
 A1_CONFIG = A1_ROOT / "config.json"
+DEEPSEEK_CONFIG = A1_ROOT / "deepseek_config.json"
 A0_CONFIG = A0_CODE / "config.json"
 RUNS_ROOT = ROOT / "runs/a1"
 
@@ -30,6 +31,7 @@ RUNS_ROOT = ROOT / "runs/a1"
 # official IFEval scoring paths.
 sys.path.insert(0, str(A0_CODE))
 import run_a0 as a0  # noqa: E402
+import deepseek_proposer  # noqa: E402
 
 
 MUTATION_OPERATORS = [
@@ -146,6 +148,118 @@ def propose_candidates(
             "status": "proposed",
         }
         write_json(path, candidate)
+        candidates.append(candidate)
+    return candidates
+
+
+def selected_failure_evidence(evaluation_dir: Path) -> list[dict[str, Any]]:
+    """Build bounded, evolution-only failure traces for the DeepSeek improver."""
+    failures = []
+    for item in strict_results(evaluation_dir / "eval_results_strict.jsonl"):
+        if item.get("follow_all_instructions"):
+            continue
+        instruction_ids = item.get("instruction_id_list", [])
+        checks = item.get("follow_instruction_list", [])
+        failures.append({
+            "prompt": item.get("prompt", ""),
+            "response": item.get("response", ""),
+            "failed_instruction_ids": [
+                instruction_id
+                for instruction_id, passed in zip(instruction_ids, checks)
+                if not passed
+            ],
+        })
+    return failures
+
+
+def mutation_history(run_dir: Path) -> list[dict[str, Any]]:
+    """Summarize evaluated mutations so rejected ideas become negative evidence."""
+    history = []
+    candidates_root = run_dir / "candidates"
+    for path in sorted(candidates_root.glob("*/candidate.json")) if candidates_root.exists() else []:
+        candidate = read_json(path, {})
+        if candidate.get("candidate_id") == "a0-baseline":
+            continue
+        evaluations = []
+        evaluations_root = path.parent / "evaluations"
+        for metrics_path in sorted(evaluations_root.glob("*/metrics.json")) if evaluations_root.exists() else []:
+            metrics = read_json(metrics_path, {})
+            evaluations.append({
+                "stage": metrics_path.parent.name,
+                "strict_prompt_accuracy": metrics.get("strict", {}).get("prompt_accuracy"),
+                "strict_instruction_accuracy": metrics.get("strict", {}).get("instruction_accuracy"),
+            })
+        history.append({
+            "candidate_id": candidate.get("candidate_id"),
+            "parent_id": candidate.get("parent_id"),
+            "generation": candidate.get("generation"),
+            "hypothesis": candidate.get("hypothesis") or candidate.get("rationale"),
+            "target_failure_modes": candidate.get("target_failure_modes", []),
+            "diff": candidate.get("diff", ""),
+            "status": candidate.get("status"),
+            "evaluations": evaluations,
+        })
+    return history
+
+
+def propose_deepseek_candidates(
+    run_dir: Path,
+    parent: dict[str, Any],
+    generation: int,
+    count: int,
+    maximum_added_words: int,
+    failures: list[dict[str, Any]],
+    provider_config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Materialize DeepSeek proposals as normal immutable candidate records."""
+    existing = []
+    for index in range(count):
+        candidate = read_json(run_dir / "candidates" / f"g{generation:02d}-c{index + 1:02d}" / "candidate.json")
+        if candidate:
+            existing.append(candidate)
+    if len(existing) == count:
+        return existing
+
+    proposal_path = run_dir / "proposals" / f"g{generation:02d}-deepseek.json"
+    proposal = read_json(proposal_path)
+    if not proposal:
+        proposal = deepseek_proposer.propose(
+            run_dir=run_dir,
+            generation=generation,
+            parent_id=parent["candidate_id"],
+            parent_prompt=parent["prompt"],
+            candidate_count=count,
+            maximum_added_words=maximum_added_words,
+            failures=failures,
+            history=mutation_history(run_dir),
+            config=provider_config,
+        )
+    candidates = []
+    for index, item in enumerate(proposal["candidates"], start=1):
+        candidate_id = f"g{generation:02d}-c{index:02d}"
+        prompt = item["prompt"]
+        candidate = {
+            "candidate_id": candidate_id,
+            "parent_id": parent["candidate_id"],
+            "generation": generation,
+            "operators": ["deepseek_proposal"],
+            "proposal_source": "deepseek",
+            "proposal_request_id": proposal.get("request_id"),
+            "proposal_model": proposal.get("returned_model") or proposal.get("requested_model"),
+            "hypothesis": item["hypothesis"],
+            "diagnosis": item["diagnosis"],
+            "target_failure_modes": item["target_failure_modes"],
+            "expected_effect": item["expected_effect"],
+            "rationale": item["hypothesis"],
+            "prompt": prompt,
+            "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "prompt_words": len(prompt.split()),
+            "added_words": item["added_words"],
+            "diff": prompt_diff(parent["prompt"], prompt),
+            "created_at": utc_now(),
+            "status": "proposed",
+        }
+        write_json(run_dir / "candidates" / candidate_id / "candidate.json", candidate)
         candidates.append(candidate)
     return candidates
 
@@ -289,7 +403,7 @@ def record_comparison(
     return comparison
 
 
-def start_mlflow(run_dir: Path, run_id: str, config: dict[str, Any]) -> None:
+def start_mlflow(run_dir: Path, run_id: str, config: dict[str, Any], proposer: str) -> None:
     """Create or resume the local A1 tracking entry."""
     tracking_uri = f"sqlite:///{(ROOT / 'runs/a0/mlflow.db').as_posix()}"
     mlflow.set_tracking_uri(tracking_uri)
@@ -307,11 +421,19 @@ def start_mlflow(run_dir: Path, run_id: str, config: dict[str, Any]) -> None:
         "screen_examples": config["search"]["screen_examples"],
         "confirmation_examples": config["search"]["confirmation_examples"],
         "mutable_component": "system_prompt",
+        "proposer": proposer,
     })
     write_json(ledger_path, {"run_id": active.info.run_id, "experiment_id": active.info.experiment_id, "tracking_uri": tracking_uri})
 
 
-def run_search(run_dir: Path, config: dict[str, Any], rows: dict[str, list[dict[str, Any]]], a0_config: dict[str, Any]) -> None:
+def run_search(
+    run_dir: Path,
+    config: dict[str, Any],
+    rows: dict[str, list[dict[str, Any]]],
+    a0_config: dict[str, Any],
+    proposer: str,
+    provider_config: dict[str, Any],
+) -> None:
     """Execute the recursive proposal, evaluation, and acceptance loop."""
     search = config["search"]
     baseline_run_id = config["experiment"]["baseline_run_id"]
@@ -328,12 +450,16 @@ def run_search(run_dir: Path, config: dict[str, Any], rows: dict[str, list[dict[
     state_path = run_dir / "search_state.json"
     state = read_json(state_path, {
         "status": "running",
+        "proposer": proposer,
         "incumbent_id": baseline["candidate_id"],
         "incumbent_prompt": baseline["prompt"],
         "completed_generations": [],
         "started_at": utc_now(),
     })
     state["status"] = "running"
+    if state.get("proposer", "deterministic") != proposer:
+        raise RuntimeError("A run cannot resume with a different proposer")
+    state.setdefault("proposer", proposer)
     # A resumed search retains its durable candidates and responses while the
     # prior failure message is cleared from the current lifecycle display.
     for stale_key in ("error", "error_type", "failed_at"):
@@ -348,13 +474,24 @@ def run_search(run_dir: Path, config: dict[str, Any], rows: dict[str, list[dict[
         if generation in state["completed_generations"]:
             continue
         parent = read_json(run_dir / "candidates" / state["incumbent_id"] / "candidate.json")
-        candidates = propose_candidates(
-            run_dir, parent["candidate_id"], parent["prompt"], generation,
-            search["candidates_per_generation"], config["experiment"]["seed"],
-            config["mutable"]["maximum_added_words_per_mutation"],
-        )
         device = config["locked"]["device"]
         parent_screen = evaluate_candidate(run_dir, parent, screen_rows, f"g{generation:02d}-screen", a0_config, evaluator_dir, baseline_run_id, device)
+        if proposer == "deepseek":
+            candidates = propose_deepseek_candidates(
+                run_dir,
+                parent,
+                generation,
+                search["candidates_per_generation"],
+                config["mutable"]["maximum_added_words_per_mutation"],
+                selected_failure_evidence(run_dir / "candidates" / parent["candidate_id"] / "evaluations" / f"g{generation:02d}-screen"),
+                provider_config,
+            )
+        else:
+            candidates = propose_candidates(
+                run_dir, parent["candidate_id"], parent["prompt"], generation,
+                search["candidates_per_generation"], config["experiment"]["seed"],
+                config["mutable"]["maximum_added_words_per_mutation"],
+            )
         screen_scores = []
         for candidate in candidates:
             metrics = evaluate_candidate(run_dir, candidate, screen_rows, f"g{generation:02d}-screen", a0_config, evaluator_dir, baseline_run_id, device)
@@ -437,8 +574,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"a1-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}")
     parser.add_argument("--stage", choices=("search", "validation", "heldout_test"), default="search")
+    parser.add_argument("--proposer", choices=("deterministic", "deepseek"))
     args = parser.parse_args()
     config = read_json(A1_CONFIG)
+    provider_config = read_json(DEEPSEEK_CONFIG, {})
     a0_config = read_json(A0_CONFIG)
     gate = read_json(ROOT / "runs/a0/experiments" / config["experiment"]["baseline_run_id"] / "gate_decision.json", {})
     if gate.get("decision") != "approved":
@@ -460,21 +599,29 @@ def main() -> None:
     run_dir = RUNS_ROOT / "experiments" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
+    existing_manifest = read_json(run_dir / "manifest.json", {})
+    proposer = args.proposer or existing_manifest.get("proposer") or "deterministic"
+    if existing_manifest and existing_manifest.get("proposer", "deterministic") != proposer:
+        raise RuntimeError("A run cannot resume with a different proposer")
+    preregistration_path = A1_ROOT / ("deepseek_preregistration.md" if proposer == "deepseek" else "preregistration.md")
     manifest = {
         "run_id": args.run_id,
         "experiment": "a1-prompt-evolution",
+        "proposer": proposer,
         "config": config,
+        "proposer_config": provider_config if proposer == "deepseek" else None,
         "a0_config_sha256": a0.sha256_file(A0_CONFIG),
         "a1_config_sha256": a0.sha256_file(A1_CONFIG),
-        "preregistration_sha256": a0.sha256_file(A1_ROOT / "preregistration.md"),
+        "proposer_config_sha256": a0.sha256_file(DEEPSEEK_CONFIG) if proposer == "deepseek" else None,
+        "preregistration_sha256": a0.sha256_file(preregistration_path),
         "created_at": utc_now(),
     }
     if not (run_dir / "manifest.json").exists():
         write_json(run_dir / "manifest.json", manifest)
-    start_mlflow(run_dir, args.run_id, config)
+    start_mlflow(run_dir, args.run_id, config, proposer)
     try:
         if args.stage == "search":
-            run_search(run_dir, config, rows, a0_config)
+            run_search(run_dir, config, rows, a0_config, proposer, provider_config)
         else:
             run_transfer_stage(run_dir, args.stage, config, rows, a0_config)
         mlflow.log_artifacts(str(run_dir), artifact_path="evidence")

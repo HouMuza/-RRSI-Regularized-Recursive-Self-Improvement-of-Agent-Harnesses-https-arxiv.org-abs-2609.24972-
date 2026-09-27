@@ -416,6 +416,8 @@ function renderA1() {
   const runs = data.runs || [];
   const run = runs[0];
   const control = data.control || {};
+  const proposerStatus = data.proposers || {};
+  const runProposer = run?.proposer || "deterministic";
   const runningThisRun = Boolean(control.alive && control.phase === "a1");
   const search = config.search || {};
   const stateRecord = run?.state || {};
@@ -440,7 +442,7 @@ function renderA1() {
     : activity?.stage?.includes("screen") ? "screening" : activity?.stage?.includes("final") ? "full evaluation" : "evaluation";
   const actionLabel = runningThisRun
     ? `${control.stage} running`
-    : run?.complete ? "start new a1 run" : `${run ? "resume" : "start"} ${nextStage}`;
+    : run?.complete ? proposerStatus.deepseek?.configured ? "start deepseek a1 run" : "deepseek key required" : `${run ? "resume" : "start"} ${nextStage}`;
   const comparisonCards = ["evolution", "validation", "heldout_test"].map(name => {
     const item = comparisons[name];
     return item
@@ -479,6 +481,7 @@ function renderA1() {
     : null;
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
+    <div class="banner ${runProposer === "deepseek" ? "success" : "info"}"><strong>Proposal mechanism:</strong> ${runProposer === "deepseek" ? `DeepSeek ${escapeHtml(proposerStatus.deepseek?.model || "model")} is diagnosing evolution failures and proposing each candidate. IFEval independently scores and selects them.` : "This is the deterministic control run. Candidates come from a fixed mutation bank. DeepSeek is not active in this run."}</div>
     <div class="insight-hero ${currentGenerationDecided && latestDecision.accepted ? "positive" : bestDelta > 0 ? "provisional" : "neutral"}">
       <div><p class="eyebrow">current scientific finding</p><h2>${escapeHtml(findingTitle)}</h2><p>${escapeHtml(findingDetail)}</p></div>
       <div class="evidence-level"><span>evidence level</span><strong>${currentGenerationDecided ? "confirmed" : "screening only"}</strong><small>${currentGenerationDecided ? "96 paired examples" : "32 example selection panel"}</small></div>
@@ -493,7 +496,7 @@ function renderA1() {
       <div class="card-head"><div><p class="eyebrow">what the search is doing</p><h2>one prompt change, measured against its parent</h2></div><span class="muted">acceptance requires a positive confirmation delta</span></div>
       <div class="evolution-flow">
         <div><span>1</span><strong>parent</strong><small>${escapeHtml(parentCandidate?.candidate_id || "a0-baseline")} at ${formatPercent(parentEvaluation?.strict_prompt_accuracy)} on this screen</small></div>
-        <div><span>2</span><strong>mutate prompt</strong><small>${escapeHtml(activeCandidate?.operators?.join(", ") || "four predefined prompt mutations")}</small></div>
+        <div><span>2</span><strong>mutate prompt</strong><small>${runProposer === "deepseek" ? "DeepSeek diagnoses failures and proposes four evidence-grounded prompts" : escapeHtml(activeCandidate?.operators?.join(", ") || "four predefined prompt mutations")}</small></div>
         <div><span>3</span><strong>screen four</strong><small>rank by strict prompt accuracy on the same 32 examples</small></div>
         <div><span>4</span><strong>confirm two</strong><small>retest the finalists and parent on 96 paired examples</small></div>
         <div><span>5</span><strong>inherit only if better</strong><small>the accepted winner becomes the next generation parent</small></div>
@@ -519,7 +522,8 @@ function renderA1() {
       <div class="card">
         <div class="card-head"><h2>run control</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
         <p class="muted">A1 is resumable. Every candidate response, rejection, and acceptance is written before the next stage begins.</p>
-        <button class="button primary" id="a1-start" ${runningThisRun ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+        <div class="kv section"><div>current proposer</div><div>${escapeHtml(runProposer)}</div><div>deepseek model</div><div>${escapeHtml(proposerStatus.deepseek?.model || "not configured")}</div><div>api key</div><div>${proposerStatus.deepseek?.configured ? "configured in process" : "not configured"}</div></div>
+        <button class="button primary" id="a1-start" ${runningThisRun || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
         ${run ? `<p class="run-id section">${escapeHtml(run.run_id)}</p>` : ""}
       </div>
     </div>
@@ -540,7 +544,7 @@ function renderA1() {
     event.currentTarget.disabled = true;
     try {
       const useExistingRun = run && !run.complete;
-      const result = await api("/api/a1/start", {method:"POST", body:JSON.stringify({run_id:useExistingRun ? run.run_id : null, stage:useExistingRun ? nextStage : "search"})});
+      const result = await api("/api/a1/start", {method:"POST", body:JSON.stringify({run_id:useExistingRun ? run.run_id : null, stage:useExistingRun ? nextStage : "search", proposer:useExistingRun ? runProposer : "deepseek"})});
       showBanner(result.message);
       await refresh();
     } catch (error) { showBanner(error.message, "error"); event.currentTarget.disabled = false; }

@@ -63,8 +63,9 @@ h3 { font-size: 14px; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); font-size: 12px; }
 .banner { padding: 12px 14px; margin-bottom: 18px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); }
-.banner.success { border-color: #2e7556; color: #a9f0ce; }
-.banner.error { border-color: #75413f; color: #ffc0bc; }
+.banner.success { border-color: #8bc9ad; background: #f0faf5; color: #185f42; }
+.banner.info { border-color: #a9c8ef; background: #f3f7fd; color: #174f91; }
+.banner.error { border-color: #e2a6a3; background: #fff5f4; color: #9f2924; }
 .grid { display: grid; gap: 15px; }
 .grid.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -17,6 +17,11 @@ a0 is complete, its evidence pack is reproducible, and the project owner
 approved the a0 gate on 2026-09-27. The frozen protocol is recorded in
 [`preregistration.md`](preregistration.md) and [`config.json`](config.json).
 
+The first active run uses the deterministic mutation bank as a control. The
+DeepSeek-driven variant is separately registered in
+[`deepseek_preregistration.md`](deepseek_preregistration.md) with provider
+settings in [`deepseek_config.json`](deepseek_config.json).
+
 ## execution stages
 
 1. `search` runs three recursive generations on nested evolution panels and
@@ -54,6 +59,19 @@ The equivalent commands are:
   --run-id a1-YYYYMMDD-HHMMSS --stage heldout_test
 ```
 
+For a new DeepSeek proposer run, set the key only in the local process
+environment and give the run a new id:
+
+```bash
+export DEEPSEEK_API_KEY="your-local-key"
+.venv/bin/python phase-a/a1-prompt-evolution/run_a1.py \
+  --run-id a1-YYYYMMDD-HHMMSS --stage search --proposer deepseek
+```
+
+The dashboard must be started from a shell that has the same environment
+variable if its run button will launch DeepSeek. The dashboard reports whether
+the key is configured, but never returns or displays its value.
+
 Do not create a new run id between stages. Search can be interrupted and
 resumed because complete response records, candidate definitions, generation
 decisions, and metrics are durable.
@@ -65,6 +83,7 @@ runs/a1/experiments/<run-id>/
   manifest.json
   mlflow.json
   search_state.json
+  proposals/g01-deepseek.json
   candidates/<candidate-id>/candidate.json
   candidates/<candidate-id>/evaluations/<stage>/
   generations/g01.json

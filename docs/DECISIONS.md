@@ -3,6 +3,24 @@
 Record research and implementation decisions that affect comparability or
 future interpretation. Add new entries at the top.
 
+## 2026-09-27: separate the deepseek improver from deterministic acceptance
+
+- **Decision:** Preserve the active deterministic mutation run as a control.
+  Run the DeepSeek prompt improver under a new A1 run id after the control has
+  completed its registered stages.
+- **Reason:** The original programme design gives DeepSeek the current prompt,
+  evolution summaries, selected failures, selected traces, and mutation
+  history so it can propose changes. The official IFEval verifier remains the
+  objective scorer, and the paired confirmation rule remains the promotion
+  authority.
+- **Constraint:** DeepSeek receives evolution evidence only. Validation and
+  held-out evidence cannot enter proposal prompts. `DEEPSEEK_API_KEY` stays in
+  the process environment and is never written to source control, MLflow,
+  logs, dashboard responses, or experiment artifacts.
+- **Evidence:** See
+  [`phase-a/a1-prompt-evolution/deepseek_preregistration.md`](../phase-a/a1-prompt-evolution/deepseek_preregistration.md).
+- **Decision owner:** Project owner.
+
 ## 2026-09-27: preregister a1 prompt-only evolution
 
 - **Decision:** Run three generations of deterministic prompt mutation with

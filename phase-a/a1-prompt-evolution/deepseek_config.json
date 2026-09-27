@@ -1,0 +1,11 @@
+{
+  "provider": "deepseek",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4-pro",
+  "api_key_environment_variable": "DEEPSEEK_API_KEY",
+  "temperature": 0.2,
+  "max_tokens": 5000,
+  "request_timeout_seconds": 180,
+  "selected_failures_per_generation": 12,
+  "maximum_history_records": 24
+}
