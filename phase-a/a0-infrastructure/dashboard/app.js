@@ -11,6 +11,7 @@ const state = {
   examples: null,
   logs: null,
   a1: null,
+  scope: localStorage.getItem("rrsi-experiment-scope") || "a1",
   view: location.hash.slice(1) || "overview",
 };
 
@@ -21,6 +22,7 @@ const startButton = document.getElementById("start-button");
 const stopButton = document.getElementById("stop-button");
 const refreshButton = document.getElementById("refresh-button");
 const dialog = document.getElementById("example-dialog");
+const experimentSelect = document.getElementById("experiment-select");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -106,7 +108,8 @@ function updateChrome() {
   document.getElementById("system-label").textContent = running
     ? `${control.run_id} / ${control.stage || control.split} is running`
     : "local runner idle";
-  startButton.classList.toggle("hidden", running || state.view === "a1");
+  const a1Context = state.view === "a1" || (state.view === "overview" && state.scope === "a1");
+  startButton.classList.toggle("hidden", running || a1Context);
   stopButton.classList.toggle("hidden", !running);
   const nextSplit = nextRunnableSplit();
   if (!running) {
@@ -116,6 +119,10 @@ function updateChrome() {
       : `${state.selectedRun?.splits?.[nextSplit]?.status === "not_started" ? "start" : "resume"} ${nextSplit.replaceAll("_", " ")}`;
   }
   document.getElementById("last-refresh").textContent = `updated ${new Date().toLocaleTimeString()}`;
+  experimentSelect.value = state.scope;
+  document.getElementById("scope-label").textContent = state.scope === "a1"
+    ? "phase a / a1 prompt evolution"
+    : "phase a / a0 infrastructure";
   document.querySelectorAll("nav a").forEach(link => {
     link.classList.toggle("active", link.dataset.view === state.view);
   });
@@ -163,7 +170,7 @@ function kpi(label, value, detail = "") {
   return `<div class="card kpi"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
 }
 
-function renderOverview() {
+function renderA0Overview() {
   const run = state.selectedRun;
   if (!run) { content.innerHTML = `<div class="empty">No A0 run exists yet.</div>`; return; }
   const split = selectedSplit(run);
@@ -204,6 +211,13 @@ function renderOverview() {
       </div>
     </div>`;
   bindNavigationButtons();
+}
+
+function renderOverview() {
+  // The overview follows the selected experiment. A0 remains available as
+  // historical baseline evidence while A1 becomes the default active context.
+  if (state.scope === "a1") renderA1();
+  else renderA0Overview();
 }
 
 function renderRuns() {
@@ -425,6 +439,11 @@ function bindNavigationButtons() {
 
 async function render() {
   state.view = location.hash.slice(1) || "overview";
+  // Direct navigation to an experiment-specific page updates the selector so
+  // the header and subsequent overview remain in the same experiment context.
+  if (state.view === "a1") state.scope = "a1";
+  if (["runs", "run", "examples", "compare", "gate"].includes(state.view)) state.scope = "a0";
+  localStorage.setItem("rrsi-experiment-scope", state.scope);
   const labels = {overview:"overview", runs:"run registry", run:"run detail", examples:"example browser", compare:"compare runs", gate:"a0 evidence gate", a1:"a1 prompt evolution", system:"system and logs"};
   title.textContent = labels[state.view] || state.view;
   updateChrome();
@@ -478,6 +497,12 @@ stopButton.addEventListener("click", async () => {
 });
 
 refreshButton.addEventListener("click", refresh);
+experimentSelect.addEventListener("change", async event => {
+  state.scope = event.target.value;
+  localStorage.setItem("rrsi-experiment-scope", state.scope);
+  location.hash = "overview";
+  await refresh();
+});
 window.addEventListener("hashchange", render);
 dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
 setInterval(async () => {

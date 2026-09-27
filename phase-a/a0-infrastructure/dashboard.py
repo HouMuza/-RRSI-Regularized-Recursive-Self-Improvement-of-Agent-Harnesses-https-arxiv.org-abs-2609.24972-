@@ -166,7 +166,8 @@ def a1_snapshot() -> dict[str, Any]:
                 metrics = store.read_json(evaluation_dir / "metrics.json", {})
                 progress = store.read_json(evaluation_dir / "progress.json", {})
                 responses = store.read_jsonl(evaluation_dir / "raw_responses.jsonl")
-                completed = len(responses) or int(progress.get("completed") or 0)
+                official_results = store.read_jsonl(evaluation_dir / "eval_results_strict.jsonl")
+                completed = len(responses) or len(official_results) or int(progress.get("completed") or 0)
                 total = int(progress.get("total") or completed)
                 evaluation_summaries.append({
                     "stage": evaluation_dir.name,

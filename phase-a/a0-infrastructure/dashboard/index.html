@@ -31,10 +31,26 @@
       <main>
         <header class="topbar">
           <div>
-            <p class="eyebrow">phase a / a0 infrastructure</p>
+            <p class="eyebrow" id="scope-label">experiment workspace</p>
             <h1 id="page-title">overview</h1>
           </div>
           <div class="top-actions">
+            <label class="experiment-picker">
+              <span>experiment</span>
+              <select id="experiment-select" aria-label="Select experiment">
+                <optgroup label="phase a">
+                  <option value="a0">a0 infrastructure</option>
+                  <option value="a1">a1 prompt evolution</option>
+                  <option disabled>a2 overfitting · locked</option>
+                  <option disabled>a3 regularized rsi · locked</option>
+                </optgroup>
+                <optgroup label="future phases">
+                  <option disabled>phase b · locked</option>
+                  <option disabled>phase c · locked</option>
+                  <option disabled>phase d · locked</option>
+                </optgroup>
+              </select>
+            </label>
             <span id="last-refresh" class="muted"></span>
             <button class="button secondary" id="refresh-button">refresh</button>
             <button class="button primary" id="start-button">resume evolution</button>
