@@ -12,6 +12,7 @@ const state = {
   logs: null,
   a1: null,
   a1Stage: null,
+  a1RunId: null,
   scope: localStorage.getItem("rrsi-experiment-scope") || "a1",
   view: location.hash.slice(1) || "overview",
 };
@@ -542,11 +543,12 @@ function renderA1() {
   const data = state.a1 || {};
   const config = data.config || {};
   const runs = data.runs || [];
-  const run = runs[0];
+  const run = runs.find(item => item.run_id === state.a1RunId) || runs[0];
   const control = data.control || {};
   const proposerStatus = data.proposers || {};
   const runProposer = run?.proposer || "deterministic";
-  const runningThisRun = Boolean(control.alive && control.phase === "a1");
+  const runningThisRun = Boolean(control.alive && control.phase === "a1" && control.run_id === run?.run_id);
+  const anyA1Running = Boolean(control.alive && control.phase === "a1");
   const search = config.search || {};
   const stateRecord = run?.state || {};
   const candidates = run?.candidates || [];
@@ -749,7 +751,7 @@ function renderA1() {
     : comparisons.heldout_test ? "heldout_test" : comparisons.validation ? "validation" : stateRecord.status === "complete" ? "evolution" : "search";
   if (!state.a1Stage) {
     state.a1Stage = automaticStage;
-    history.replaceState(null, "", `#a1/${automaticStage}`);
+    history.replaceState(null, "", `#a1/${automaticStage}/${run?.run_id || ""}`);
   }
   const selectedStage = state.a1Stage;
   const selectedComparison = selectedStage === "search" ? null : comparisons[selectedStage];
@@ -772,8 +774,9 @@ function renderA1() {
         <div class="run-control-title"><h2>${escapeHtml(run?.run_id || "new a1 run")}</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
         <p class="muted">Proposer: ${escapeHtml(runProposer)} · model: ${escapeHtml(proposerStatus.deepseek?.model || "not configured")} · API key: ${proposerStatus.deepseek?.configured ? "configured" : "not configured"}</p>
       </div>
-      <button class="button primary" id="a1-start" ${runningThisRun || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label><button class="button primary" id="a1-start" ${anyA1Running || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
     </div>
+    ${runs.length > 1 ? `<div class="card run-history"><div class="card-head"><div><h2>A1 run comparison</h2><p class="muted">Every experiment remains available. The selected row controls the stage views below.</p></div></div><div class="run-history-grid"><div class="run-history-row run-history-head"><span>run</span><span>proposer</span><span>search</span><span>accepted</span><span>evolution</span><span>validation</span><span>heldout</span></div>${runs.map(item => { const decisions = item.decisions || []; const accepted = decisions.filter(decision => decision.accepted).length; const record = item.state || {}; return `<button class="run-history-row ${item.run_id === run?.run_id ? "active" : ""}" data-a1-run="${escapeHtml(item.run_id)}"><span class="run-id">${escapeHtml(item.run_id)}</span><strong>${escapeHtml(item.proposer || "deterministic")}</strong><span>${record.status || "not started"}</span><span>${accepted} change${accepted === 1 ? "" : "s"}</span><span>${item.comparisons?.evolution ? signedPercent(item.comparisons.evolution.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.validation ? signedPercent(item.comparisons.validation.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.heldout_test ? signedPercent(item.comparisons.heldout_test.strict_prompt_delta) : "pending"}</span></button>`; }).join("")}</div></div>` : ""}
     <div class="card stage-pipeline" aria-label="Select A1 stage">
       ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
     </div>
@@ -836,7 +839,13 @@ function renderA1() {
     } catch (error) { showBanner(error.message, "error"); event.currentTarget.disabled = false; }
   });
   document.querySelectorAll("[data-a1-stage]").forEach(button => button.addEventListener("click", () => {
-    location.hash = `a1/${button.dataset.a1Stage}`;
+    location.hash = `a1/${button.dataset.a1Stage}/${run.run_id}`;
+  }));
+  document.getElementById("a1-run-select").addEventListener("change", event => {
+    location.hash = `a1/${selectedStage}/${event.target.value}`;
+  });
+  document.querySelectorAll("[data-a1-run]").forEach(button => button.addEventListener("click", () => {
+    location.hash = `a1/${selectedStage}/${button.dataset.a1Run}`;
   }));
   document.querySelectorAll("[data-stage-help]").forEach(button => button.addEventListener("click", () => {
     openStageHelp(button.dataset.stageHelp);
@@ -851,10 +860,11 @@ function bindNavigationButtons() {
 }
 
 async function render() {
-  const [requestedView, requestedStage] = (location.hash.slice(1) || "overview").split("/");
+  const [requestedView, requestedStage, requestedRun] = (location.hash.slice(1) || "overview").split("/");
   state.view = requestedView;
   if (state.view === "a1") {
     state.a1Stage = ["search", "evolution", "validation", "heldout_test"].includes(requestedStage) ? requestedStage : null;
+    state.a1RunId = requestedRun ? decodeURIComponent(requestedRun) : null;
   }
   // Direct navigation to an experiment-specific page updates the selector so
   // the header and subsequent overview remain in the same experiment context.
