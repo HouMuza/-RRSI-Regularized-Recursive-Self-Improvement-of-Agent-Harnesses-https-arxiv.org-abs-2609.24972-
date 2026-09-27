@@ -121,6 +121,7 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 .a1-live { margin-bottom: 14px; }
+.a1-live-explanation { color: var(--muted); margin: -3px 0 13px; }
 .a1-progress-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin-top: 10px; color: var(--muted); font-size: 12px; }
 .a1-progress-meta strong { color: var(--text); }
 

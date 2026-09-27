@@ -377,6 +377,12 @@ function renderA1() {
   const comparisons = run?.comparisons || {};
   const activity = run?.active_evaluation;
   const nextStage = run?.next_stage || "search";
+  const activeCandidate = activity ? candidates.find(candidate => candidate.candidate_id === activity.candidate_id) : null;
+  const activeGeneration = activeCandidate?.generation || stateRecord.completed_generations?.length + 1 || 1;
+  const candidatePosition = Number(activity?.candidate_id?.match(/c(\d+)$/)?.[1] || 0);
+  const stageLabel = activity?.stage?.includes("confirmation")
+    ? "confirmation"
+    : activity?.stage?.includes("screen") ? "screening" : activity?.stage?.includes("final") ? "full evaluation" : "evaluation";
   const actionLabel = runningThisRun
     ? `${control.stage} running`
     : run?.complete ? "start new a1 run" : `${run ? "resume" : "start"} ${nextStage}`;
@@ -388,7 +394,7 @@ function renderA1() {
   }).join("");
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
-    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">current evaluation</p><h2>${escapeHtml(activity.candidate_id)} / ${escapeHtml(activity.stage)}</h2></div>${statusBadge(runningThisRun ? "running" : activity.status)}</div><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} examples</strong><span>${(activity.percent || 0).toFixed(1)}%</span><span>strict ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>ETA ${formatDuration(activity.eta_seconds)}</span></div></div>` : ""}
+    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">evolution is active</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}</h2></div>${statusBadge(runningThisRun ? "running" : activity.status)}</div><p class="a1-live-explanation">Evaluating <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} examples</strong><span>${(activity.percent || 0).toFixed(1)}%</span><span>live strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>ETA ${formatDuration(activity.eta_seconds)}</span></div></div>` : ""}
     <div class="grid main-side">
       <div class="card">
         <div class="card-head"><div><p class="eyebrow">prompt-only recursive improvement</p><h2>a1 evolution protocol</h2></div>${statusBadge(run?.complete ? "complete" : runningThisRun ? "running" : run ? stateRecord.status || "ready" : "ready")}</div>
@@ -399,7 +405,7 @@ function renderA1() {
           <div>screen panel</div><div>${escapeHtml(search.screen_examples || 0)} evolution examples</div>
           <div>confirmation panel</div><div>${escapeHtml(search.confirmation_examples || 0)} evolution examples</div>
           <div>acceptance rule</div><div>positive paired confirmation delta</div>
-          <div>current incumbent</div><div class="run-id">${escapeHtml(stateRecord.incumbent_id || "a0-baseline")}</div>
+          <div>current incumbent</div><div class="run-id">${escapeHtml(stateRecord.incumbent_id || "a0-baseline")} ${runningThisRun && !(stateRecord.completed_generations || []).length ? "· unchanged until confirmation" : ""}</div>
         </div>
       </div>
       <div class="card">
