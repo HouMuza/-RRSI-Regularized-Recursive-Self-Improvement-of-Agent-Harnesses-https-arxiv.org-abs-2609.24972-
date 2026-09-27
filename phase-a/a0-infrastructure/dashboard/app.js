@@ -11,7 +11,7 @@ const state = {
   examples: null,
   logs: null,
   a1: null,
-  a1Stage: localStorage.getItem("rrsi-a1-stage") || null,
+  a1Stage: null,
   scope: localStorage.getItem("rrsi-experiment-scope") || "a1",
   view: location.hash.slice(1) || "overview",
 };
@@ -726,7 +726,11 @@ function renderA1() {
   const automaticStage = finalSplit && evaluationInProgress
     ? finalSplit
     : comparisons.heldout_test ? "heldout_test" : comparisons.validation ? "validation" : stateRecord.status === "complete" ? "evolution" : "search";
-  const selectedStage = state.a1Stage || automaticStage;
+  if (!state.a1Stage) {
+    state.a1Stage = automaticStage;
+    history.replaceState(null, "", `#a1/${automaticStage}`);
+  }
+  const selectedStage = state.a1Stage;
   const selectedComparison = selectedStage === "search" ? null : comparisons[selectedStage];
   const selectedStageLabel = selectedStage.replaceAll("_", " ");
   const showSearch = selectedStage === "search";
@@ -795,9 +799,7 @@ function renderA1() {
     } catch (error) { showBanner(error.message, "error"); event.currentTarget.disabled = false; }
   });
   document.querySelectorAll("[data-a1-stage]").forEach(button => button.addEventListener("click", () => {
-    state.a1Stage = button.dataset.a1Stage;
-    localStorage.setItem("rrsi-a1-stage", state.a1Stage);
-    renderA1();
+    location.hash = `a1/${button.dataset.a1Stage}`;
   }));
   document.querySelectorAll("[data-stage-help]").forEach(button => button.addEventListener("click", () => {
     openStageHelp(button.dataset.stageHelp);
@@ -812,7 +814,11 @@ function bindNavigationButtons() {
 }
 
 async function render() {
-  state.view = location.hash.slice(1) || "overview";
+  const [requestedView, requestedStage] = (location.hash.slice(1) || "overview").split("/");
+  state.view = requestedView;
+  if (state.view === "a1") {
+    state.a1Stage = ["search", "evolution", "validation", "heldout_test"].includes(requestedStage) ? requestedStage : null;
+  }
   // Direct navigation to an experiment-specific page updates the selector so
   // the header and subsequent overview remain in the same experiment context.
   if (state.view === "a1") state.scope = "a1";

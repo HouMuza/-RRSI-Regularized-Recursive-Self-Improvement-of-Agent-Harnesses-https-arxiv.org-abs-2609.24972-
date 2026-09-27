@@ -92,6 +92,7 @@ h3 { font-size: 14px; }
 .run-control-title h2 { margin-bottom: 4px; }
 .stage-pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 14px; }
 .pipeline-stage { position: relative; min-width: 0; }
+.pipeline-stage.active { background: #edf4fd; border-radius: 6px; padding: 8px; margin: -8px; }
 .stage-select { appearance: none; border: 0; background: transparent; padding: 0; width: 100%; text-align: left; color: inherit; cursor: pointer; font: inherit; }
 .pipeline-stage:hover strong, .pipeline-stage.active strong { color: #1456a0; }
 .stage-select:focus-visible, .stage-help:focus-visible { outline: 2px solid #1877f2; outline-offset: 3px; }
