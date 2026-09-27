@@ -273,6 +273,27 @@ function splitComparisonChart(comparisons) {
   return `<svg class="split-comparison-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Baseline and selected prompt accuracy by evaluation split">${grid}${groups}<text x="${width-190}" y="14" fill="#52657a" font-size="10">■ baseline</text><text x="${width-105}" y="14" fill="#1456a0" font-size="10">■ selected prompt</text></svg>`;
 }
 
+function stageMetricChart(baseline, selected) {
+  const metrics = [
+    {label: "strict prompt", key: "strict_prompt_accuracy"},
+    {label: "strict instruction", key: "strict_instruction_accuracy"},
+    {label: "loose prompt", key: "loose_prompt_accuracy"},
+  ];
+  if (!baseline || !selected) return `<div class="chart-empty">Metric breakdown is not available for this stage.</div>`;
+  const width = 760, height = 265, left = 55, right = 20, top = 25, bottom = 52;
+  const y = value => top + (1 - Number(value || 0)) * (height - top - bottom);
+  const groupWidth = (width - left - right) / metrics.length;
+  const grid = [0, .25, .5, .75, 1].map(value => `<g><line x1="${left}" y1="${y(value)}" x2="${width-right}" y2="${y(value)}" stroke="#e6e8ec"/><text x="13" y="${y(value)+4}" fill="#6d7179" font-size="10">${value*100}%</text></g>`).join("");
+  const groups = metrics.map((metric, index) => {
+    const center = left + groupWidth * index + groupWidth / 2;
+    const baselineValue = Number(baseline[metric.key] || 0);
+    const selectedValue = Number(selected[metric.key] || 0);
+    const barWidth = Math.min(48, groupWidth / 4);
+    return `<g><rect x="${center-barWidth-4}" y="${y(baselineValue)}" width="${barWidth}" height="${y(0)-y(baselineValue)}" fill="#8ca8c7"/><rect x="${center+4}" y="${y(selectedValue)}" width="${barWidth}" height="${y(0)-y(selectedValue)}" fill="#1877f2"/><text x="${center-barWidth/2-4}" y="${y(baselineValue)-7}" text-anchor="middle" fill="#52657a" font-size="11">${(baselineValue*100).toFixed(1)}%</text><text x="${center+barWidth/2+4}" y="${y(selectedValue)-7}" text-anchor="middle" fill="#1456a0" font-size="11">${(selectedValue*100).toFixed(1)}%</text><text x="${center}" y="${height-20}" text-anchor="middle" fill="#555b66" font-size="11">${escapeHtml(metric.label)}</text></g>`;
+  }).join("");
+  return `<svg class="stage-metric-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Stage metric breakdown for baseline and selected prompt">${grid}${groups}<text x="${width-190}" y="14" fill="#52657a" font-size="10">■ baseline</text><text x="${width-105}" y="14" fill="#1456a0" font-size="10">■ selected prompt</text></svg>`;
+}
+
 function kpi(label, value, detail = "") {
   return `<div class="card kpi"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
 }
@@ -736,6 +757,13 @@ function renderA1() {
   const showSearch = selectedStage === "search";
   const showActiveEvaluation = showSearch ? !finalSplit : finalSplit === selectedStage && evaluationInProgress;
   const retainedBaseline = stateRecord.winner_id === "a0-baseline";
+  const selectedFinalStage = selectedStage === "search" ? null : `final-${selectedStage}`;
+  const baselineFinalEvaluation = selectedFinalStage
+    ? (candidatesById.get("a0-baseline")?.evaluations || []).find(item => item.stage === selectedFinalStage)
+    : null;
+  const winnerFinalEvaluation = selectedFinalStage
+    ? (candidatesById.get(stateRecord.winner_id || stateRecord.incumbent_id || "a0-baseline")?.evaluations || []).find(item => item.stage === selectedFinalStage)
+    : null;
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
     <div class="card run-control-top">
@@ -750,6 +778,8 @@ function renderA1() {
       ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
     </div>
     ${!showSearch ? selectedComparison ? `<div class="card evaluation-insight"><div><p class="eyebrow">${escapeHtml(selectedStageLabel)} result</p><h2>${signedPercent(selectedComparison.strict_prompt_delta)} change from baseline</h2><p>${retainedBaseline ? `Search retained the original prompt, so ${escapeHtml(selectedStageLabel)} measured the same prompt on both sides. Both scored ${formatPercent(selectedComparison.baseline_strict_prompt_accuracy)}. This confirms reproducibility and cannot demonstrate improvement.` : `The selected prompt scored ${formatPercent(selectedComparison.candidate_strict_prompt_accuracy)} versus ${formatPercent(selectedComparison.baseline_strict_prompt_accuracy)} for the baseline.`}</p><strong>${selectedStage === "heldout_test" ? "This is the final A1 result." : selectedStage === "validation" ? "Validation is complete. The heldout test is next." : "Evolution evaluation is complete."}</strong></div>${splitComparisonChart({[selectedStage]: selectedComparison})}</div>` : `<div class="card stage-empty"><p class="eyebrow">${escapeHtml(selectedStageLabel)}</p><h2>${finalSplit === selectedStage && evaluationInProgress ? "Evaluation is running" : "This stage has not run yet"}</h2><p>${selectedStage === "heldout_test" ? "Complete validation before starting the heldout test." : "Complete the preceding stage before this result becomes available."}</p></div>` : ""}
+    ${!showSearch && selectedComparison && baselineFinalEvaluation && winnerFinalEvaluation ? `<div class="card section"><div class="card-head"><div><h2>${escapeHtml(selectedStageLabel)} metric profile</h2><p class="muted">complete verifier results across all three quality measures</p></div></div>${stageMetricChart(baselineFinalEvaluation, winnerFinalEvaluation)}<p class="chart-note">Strict prompt accuracy requires every instruction in an example to pass. Strict instruction accuracy counts individual instructions. Loose prompt accuracy tolerates formatting variations.</p></div>` : ""}
+    ${!showSearch && winnerFinalEvaluation?.progress_history?.length ? `<div class="card section"><div class="card-head"><div><h2>${escapeHtml(selectedStageLabel)} checkpoint history</h2><p class="muted">how measured quality changed as examples were verified</p></div></div>${metricChart(winnerFinalEvaluation.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}</div>` : ""}
     <div class="card experiment-brief ${showActiveEvaluation ? "" : "hidden"}">
       <p class="eyebrow">what is happening now</p>
       <h2>${escapeHtml(activeHeadline)}</h2>
