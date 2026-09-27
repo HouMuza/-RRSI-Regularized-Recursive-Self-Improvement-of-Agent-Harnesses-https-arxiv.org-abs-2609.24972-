@@ -140,12 +140,14 @@ function metricChart(history, metricNames) {
   const points = history || [];
   if (!points.length) return `<div class="chart-empty">No metric history has been recorded yet.</div>`;
   const width = 900, height = 245, left = 46, right = 12, top = 16, bottom = 27;
-  const colors = ["#632ca6", "#2f6fda", "#d07a16", "#16855b"];
+  const colors = ["#1877f2", "#16855b", "#d07a16", "#7b61b3"];
+  const dashPatterns = ["none", "8 5", "2 4", "11 4 2 4"];
   const x = index => left + index / Math.max(points.length - 1, 1) * (width - left - right);
   const y = value => top + (1 - Number(value || 0)) * (height - top - bottom);
   const lines = metricNames.map((metric, metricIndex) => {
     const path = points.map((point, index) => `${index ? "L" : "M"}${x(index).toFixed(1)},${y(point[metric]).toFixed(1)}`).join(" ");
-    return `<path d="${path}" fill="none" stroke="${colors[metricIndex]}" stroke-width="2.5"/><text x="${left + metricIndex * 190}" y="240" fill="${colors[metricIndex]}" font-size="11">${escapeHtml(metric.replaceAll("_", " "))}</text>`;
+    const lastPoint = points[points.length - 1];
+    return `<path d="${path}" fill="none" stroke="${colors[metricIndex]}" stroke-width="2.5" stroke-dasharray="${dashPatterns[metricIndex]}"/><circle cx="${x(points.length - 1)}" cy="${y(lastPoint[metric])}" r="3" fill="${colors[metricIndex]}"/><text x="${left + metricIndex * 190}" y="240" fill="${colors[metricIndex]}" font-size="11">${escapeHtml(metric.replaceAll("_", " "))}</text>`;
   }).join("");
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Metric history">
     <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#d8d6df"/>
@@ -188,7 +190,7 @@ function renderOverview() {
       </div>
     </div>
     <div class="grid two section">
-      <div class="card"><div class="card-head"><h2>live quality</h2><span class="muted">official strict and loose checks</span></div>${metricChart(run.progress_history?.evolution, ["strict_prompt_accuracy", "loose_prompt_accuracy"])}</div>
+      <div class="card"><div class="card-head"><h2>live quality</h2><span class="muted">prompt and instruction checks</span></div>${metricChart(run.progress_history?.evolution, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}</div>
       <div class="card"><div class="card-head"><h2>frozen protocol</h2><button class="button ghost" data-nav="system">inspect provenance</button></div>
         <div class="kv">
           <div>model</div><div>${escapeHtml(state.overview.protocol?.model?.name)}</div>
