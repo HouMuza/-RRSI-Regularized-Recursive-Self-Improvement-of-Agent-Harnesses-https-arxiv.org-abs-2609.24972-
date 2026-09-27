@@ -456,41 +456,42 @@ function renderA1() {
   const completedDecisions = run?.decisions || [];
   const parentCandidate = candidates.find(candidate => candidate.candidate_id === (stateRecord.incumbent_id || "a0-baseline")) || candidates.find(candidate => candidate.candidate_id === "a0-baseline");
   const parentEvaluation = [...(parentCandidate?.evaluations || [])].reverse().find(item => item.stage === activity?.stage);
-  const completedCandidates = generationCandidates.filter(item => item.evaluation?.status === "complete");
-  const bestCompleted = completedCandidates[0];
-  const bestDelta = bestCompleted && parentEvaluation
-    ? bestCompleted.evaluation.strict_prompt_accuracy - parentEvaluation.strict_prompt_accuracy
-    : null;
   const latestDecision = completedDecisions.at(-1);
   const currentGenerationDecided = latestDecision?.generation === activeGeneration;
-  const findingTitle = currentGenerationDecided
-    ? latestDecision.accepted ? `generation ${activeGeneration} found a confirmed improvement` : `generation ${activeGeneration} found no confirmed improvement`
-    : bestDelta == null ? "not enough evidence yet"
-    : bestDelta > 0 ? "a screening candidate is ahead, but improvement is not confirmed"
-    : "no completed candidate currently beats the parent prompt";
   const findingDetail = currentGenerationDecided
     ? latestDecision.accepted
       ? `${latestDecision.selected_candidate_id} beat ${latestDecision.parent_id} by ${signedPercent(latestDecision.strict_prompt_delta)} on the 96 example paired confirmation panel and becomes the next generation parent.`
       : `The best finalist did not beat ${latestDecision.parent_id} on the 96 example paired confirmation panel, so the parent prompt is retained.`
-    : bestCompleted && parentEvaluation
-      ? `${bestCompleted.candidate.candidate_id} is the best completed screen at ${formatPercent(bestCompleted.evaluation.strict_prompt_accuracy)}, compared with ${formatPercent(parentEvaluation.strict_prompt_accuracy)} for ${parentCandidate.candidate_id}. Its ${signedPercent(bestDelta)} difference is only a 32 example screen result.`
-      : `Candidates are being screened against ${parentCandidate?.candidate_id || "the current parent"}. A claim of improvement requires a positive paired result on the 96 example confirmation panel.`;
+    : "No improvement has been confirmed yet.";
   const activeHasUsableCheckpoint = activity?.status === "complete" || Number(activity?.scored_examples || 0) >= 10;
   const activeDelta = activeHasUsableCheckpoint && activity?.strict_prompt_accuracy != null && parentEvaluation?.strict_prompt_accuracy != null
     ? activity.strict_prompt_accuracy - parentEvaluation.strict_prompt_accuracy
     : null;
+  const activeComparison = measuringParent
+    ? `The system is measuring ${activeCandidate?.candidate_id || "the parent prompt"} on the same tasks that candidates must beat.`
+    : activeDelta == null
+      ? `${activity?.scored_examples || 0} of ${activity?.total || 0} examples have been scored, which is too early for a useful comparison.`
+      : `${activeCandidate?.candidate_id || "This candidate"} currently passes ${formatPercent(activity?.strict_prompt_accuracy)} of scored prompts. The parent passes ${formatPercent(parentEvaluation?.strict_prompt_accuracy)}, so the candidate is ${Math.abs(activeDelta * 100).toFixed(1)} percentage points ${activeDelta > 0 ? "ahead" : "behind"}.`;
+  const activeHeadline = measuringParent
+    ? `Measuring the generation ${activeGeneration} parent benchmark`
+    : activeDelta == null
+      ? `Testing ${activeCandidate?.candidate_id || "the current candidate"}`
+      : `${activeCandidate?.candidate_id || "The current candidate"} is ${Math.abs(activeDelta * 100).toFixed(1)} points ${activeDelta > 0 ? "ahead" : "behind"} so far`;
+  const nextExplanation = stageLabel === "screening"
+    ? "After all four candidates finish, the two highest scores move to a larger 96 example confirmation round. Nothing is inherited during screening."
+    : stageLabel === "confirmation"
+      ? "After both finalists finish, the best one is adopted only if it beats the parent on the same 96 examples. Otherwise the parent remains unchanged."
+      : "This stage measures the selected prompt without allowing another prompt change.";
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
     <div class="card experiment-brief">
-      <div class="brief-finding"><div><p class="eyebrow">current scientific finding</p><h2>${escapeHtml(findingTitle)}</h2><p>${escapeHtml(findingDetail)}</p></div><div class="evidence-level"><span>evidence</span><strong>${currentGenerationDecided ? "confirmed" : "screening only"}</strong><small>${currentGenerationDecided ? "96 paired examples" : "selection evidence"}</small></div></div>
-      <div class="brief-facts">
-        <div><span>evolving</span><strong>system prompt</strong><small>everything else is frozen</small></div>
-        <div><span>objective</span><strong>strict prompt accuracy</strong><small>every instruction must pass</small></div>
-        <div><span>target to beat</span><strong>${escapeHtml(parentCandidate?.candidate_id || "a0-baseline")} · ${formatPercent(parentEvaluation?.strict_prompt_accuracy)}</strong><small>${parentEvaluation?.strict_prompt_accuracy == null ? "measurement pending" : `${formatPercent(1 - parentEvaluation.strict_prompt_accuracy)} currently fail`}</small></div>
-        <div><span>proposer</span><strong>${runProposer === "deepseek" ? escapeHtml(proposerStatus.deepseek?.model || "deepseek") : "deterministic control"}</strong><small>${runProposer === "deepseek" ? "failure-driven mutations" : "fixed mutation bank"}</small></div>
-      </div>
-      <div class="process-line"><strong>how inheritance works</strong><span>parent</span><b>→</b><span>four mutations</span><b>→</b><span>32 example screen</span><b>→</b><span>two finalists on 96 examples</span><b>→</b><span>inherit only if better</span></div>
-      ${activeCandidate ? `<div class="current-change"><strong>${escapeHtml(activeCandidate.candidate_id)} ${measuringParent ? "is the benchmark:" : "is trying:"}</strong> ${escapeHtml(measuringParent ? "The parent is measured on the identical panel before any child can be compared with it." : activeCandidate.rationale || "the frozen baseline behavior")} <span>${measuringParent ? `${activity.scored_examples || 0} of ${activity.total || 0} benchmark examples scored` : activeDelta == null ? `too early to compare · ${activity.scored_examples || 0} of ${activity.total || 0} scored` : `${signedPercent(activeDelta)} versus parent so far · ${activity.status === "complete" ? "screen complete" : `${activity.scored_examples || 0} of ${activity.total || 0} scored`}`}</span></div>` : ""}
+      <p class="eyebrow">what is happening now</p>
+      <h2>${escapeHtml(activeHeadline)}</h2>
+      <p class="brief-lead">${escapeHtml(activeComparison)}</p>
+      ${!measuringParent && activeCandidate ? `<p><strong>The change being tested:</strong> ${escapeHtml(activeCandidate.rationale || "A revised system prompt is being compared with its parent.")}</p>` : ""}
+      <p><strong>What counts as success:</strong> the revised system prompt must make Qwen satisfy every instruction in more prompts than the current parent does. The model weights, data, and evaluator do not change.</p>
+      <p><strong>What happens next:</strong> ${escapeHtml(nextExplanation)}</p>
+      <div class="plain-conclusion"><strong>Current conclusion:</strong> ${escapeHtml(currentGenerationDecided ? findingDetail : "No improvement has been confirmed yet.")} <span>${runProposer === "deepseek" ? `DeepSeek ${escapeHtml(proposerStatus.deepseek?.model || "")} proposes the changes; IFEval scores them.` : "This control run uses a fixed mutation bank. DeepSeek will be used in the separately registered run."}</span></div>
     </div>
     ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? "evolution is active" : runningThisRun ? "candidate complete · next candidate starting" : "latest candidate evaluation"}</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${measuringParent ? "parent benchmark" : `candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}`}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next candidate is still to run" : "evaluation complete"}</span></div></div>` : ""}
     ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>${evaluationInProgress ? "live" : "latest"} candidate quality</h2><span class="muted">checkpoint estimates for the candidate currently being measured</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}<p class="chart-note">Strict prompt accuracy is the selection metric. A prompt passes only when every instruction in that example passes. Live values update at verifier checkpoints, so generated and scored counts can differ.</p></div><div class="card"><div class="card-head"><h2>generation ${activeGeneration}: candidate versus parent</h2><span class="muted">click a measured row for evidence</span></div><table><thead><tr><th>candidate and change</th><th>evidence</th><th>strict prompt</th><th>delta</th></tr></thead><tbody><tr ${parentEvaluation ? `class="drilldown-row" data-a1-candidate="${escapeHtml(parentCandidate.candidate_id)}" data-a1-stage="${escapeHtml(parentEvaluation.stage)}"` : ""}><td><span class="run-id">${escapeHtml(parentCandidate?.candidate_id || "parent")}</span><small class="table-subline">current parent benchmark</small></td><td>${parentEvaluation ? `${parentEvaluation.scored_examples || parentEvaluation.total}/${parentEvaluation.total} scored` : "still to run"}</td><td>${formatPercent(parentEvaluation?.strict_prompt_accuracy)}</td><td class="metric-neutral">reference</td></tr>${generationCandidates.map(item => { const enoughEvidence = item.evaluation?.status === "complete" || Number(item.evaluation?.scored_examples || 0) >= 10; const delta = enoughEvidence && item.evaluation?.strict_prompt_accuracy != null && parentEvaluation?.strict_prompt_accuracy != null ? item.evaluation.strict_prompt_accuracy - parentEvaluation.strict_prompt_accuracy : null; return `<tr ${item.evaluation ? `class="drilldown-row" data-a1-candidate="${escapeHtml(item.candidate.candidate_id)}" data-a1-stage="${escapeHtml(item.evaluation.stage)}"` : ""}><td><span class="run-id">${escapeHtml(item.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(item.candidate.operators?.join(", ") || "no mutation")}</small></td><td>${item.evaluation ? `${item.evaluation.scored_examples || 0}/${item.evaluation.total} scored${item.evaluation.status === "complete" ? "" : " · partial"}` : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_prompt_accuracy) : "still to run"}</td><td class="${delta > 0 ? "metric-positive" : delta < 0 ? "metric-negative" : "metric-neutral"}">${!item.evaluation ? "still to run" : delta == null ? "too early" : `${signedPercent(delta)}${item.evaluation.status === "complete" ? "" : " partial"}`}</td></tr>`; }).join("")}</tbody></table></div></div>` : ""}

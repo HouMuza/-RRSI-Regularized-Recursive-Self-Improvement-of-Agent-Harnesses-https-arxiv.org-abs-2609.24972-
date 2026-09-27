@@ -128,29 +128,14 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .candidate-example.failed { background: #fff6f5; }
 .candidate-example.pending { background: var(--panel-3); }
 .experiment-brief { margin-bottom: 14px; }
-.brief-finding { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 24px; align-items: center; }
-.brief-finding h2 { margin: 4px 0 7px; font-size: 24px; }
-.brief-finding p:last-child { margin: 0; color: var(--muted); line-height: 1.5; }
-.evidence-level { padding-left: 20px; }
-.evidence-level span, .evidence-level small { display: block; color: var(--muted); }
-.evidence-level strong { display: block; margin: 5px 0; font-size: 19px; }
-.brief-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-top: 20px; padding: 18px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
-.brief-facts span, .brief-facts small { display: block; color: var(--muted); }
-.brief-facts span { margin-bottom: 5px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
-.brief-facts strong { display: block; margin-bottom: 4px; }
-.process-line { display: flex; flex-wrap: wrap; gap: 7px 12px; align-items: center; padding-top: 16px; font-size: 12px; color: var(--muted); }
-.process-line strong { margin-right: 8px; color: var(--text); }
-.process-line b { color: var(--blue); }
-.current-change { margin-top: 14px; padding: 13px 15px; border-radius: 7px; background: #edf4ff; line-height: 1.5; }
-.current-change span { display: block; margin-top: 3px; color: var(--muted); }
+.experiment-brief h2 { margin: 4px 0 8px; font-size: 25px; }
+.experiment-brief > p:not(.eyebrow) { max-width: 1120px; margin: 10px 0; line-height: 1.55; }
+.brief-lead { color: var(--text); font-size: 16px; }
+.plain-conclusion { margin-top: 17px; padding: 14px 16px; border-radius: 7px; background: #edf4ff; line-height: 1.5; }
+.plain-conclusion span { display: block; margin-top: 3px; color: var(--muted); }
 .table-subline { display: block; margin-top: 4px; color: var(--muted); }
 .chart-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
-@media (max-width: 1050px) {
-  .brief-finding { grid-template-columns: 1fr; }
-  .evidence-level { padding: 14px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-  .brief-facts { grid-template-columns: 1fr 1fr; }
-}
 .artifact-hash { font: 10px ui-monospace, monospace; color: var(--faint); word-break: break-all; }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
