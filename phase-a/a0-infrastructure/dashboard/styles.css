@@ -98,6 +98,37 @@ h3 { font-size: 14px; }
 .run-history-row { display: grid; grid-template-columns: minmax(190px, 1.5fr) 100px 90px 85px 80px 80px 80px; gap: 12px; align-items: center; padding: 11px 10px; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; color: inherit; text-align: left; font: inherit; }
 button.run-history-row { cursor: pointer; }
 button.run-history-row:hover, .run-history-row.active { background: #edf4fd; }
+.comparison-open { white-space: nowrap; }
+.comparison-icon { display: inline-block; margin-right: 6px; font-size: 15px; }
+
+/* The comparison drawer overlays the experiment so the live stage remains in
+ * place behind it. Only the panel moves; recorded metric values never animate. */
+.drawer-layer { position: fixed; inset: 0; z-index: 100; visibility: hidden; pointer-events: none; }
+.drawer-layer.open { visibility: visible; pointer-events: auto; }
+.drawer-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(25, 32, 43, .28); opacity: 0; cursor: default; transition: opacity .24s ease; }
+.drawer-layer.open .drawer-backdrop { opacity: 1; }
+.comparison-drawer { position: absolute; top: 0; right: 0; width: min(980px, calc(100vw - 72px)); height: 100%; overflow-y: auto; background: var(--panel); box-shadow: -12px 0 42px rgba(28, 38, 52, .18); transform: translateX(102%); transition: transform .28s ease; }
+.drawer-layer.open .comparison-drawer { transform: translateX(0); }
+.drawer-header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; gap: 24px; padding: 26px 30px 20px; background: rgba(255, 255, 255, .97); border-bottom: 1px solid var(--line-soft); }
+.drawer-header h2 { margin: 2px 0 7px; font-size: 25px; }
+.drawer-header p:last-child { margin: 0; color: var(--muted); line-height: 1.45; }
+.drawer-close { flex: 0 0 auto; width: 36px; height: 36px; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 28px; line-height: 1; }
+.comparison-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 0 30px; background: var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.comparison-summary div { display: grid; gap: 4px; padding: 20px 16px; background: var(--panel); }
+.comparison-summary strong { font-size: 25px; }
+.comparison-summary span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.drawer-section { padding: 26px 30px; border-bottom: 1px solid var(--line-soft); }
+.drawer-section-head { display: flex; justify-content: space-between; align-items: start; margin-bottom: 13px; }
+.drawer-section-head h3 { margin: 0 0 4px; font-size: 17px; }
+.drawer-section-head p { margin: 0; color: var(--muted); font-size: 12px; }
+.comparison-chart-legend { display: flex; flex-wrap: wrap; gap: 9px 18px; margin: 17px 0 2px; color: var(--muted); font-size: 11px; }
+.comparison-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.comparison-chart-legend i { width: 18px; height: 3px; border-radius: 3px; }
+.run-comparison-chart { display: block; width: 100%; height: 275px; }
+.drawer-run-table { min-width: 780px; }
+.drawer-section:has(.drawer-run-table) { overflow-x: auto; }
+body.drawer-open { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .drawer-backdrop, .comparison-drawer { transition: none; } }
 .run-history-head { color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; }
 .stage-pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 14px; }
 .pipeline-stage { position: relative; min-width: 0; }
@@ -209,4 +240,9 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
   .grid.kpis { grid-template-columns: 1fr; }
   .progress-row { grid-template-columns: 1fr; }
   .top-actions { width: 100%; flex-wrap: wrap; }
+  .run-control-top, .run-control-actions { align-items: stretch; flex-direction: column; }
+  .run-control-actions select { min-width: 0; width: 100%; }
+  .comparison-drawer { width: 100vw; }
+  .drawer-header, .drawer-section { padding-left: 18px; padding-right: 18px; }
+  .comparison-summary { margin: 0 18px; }
 }

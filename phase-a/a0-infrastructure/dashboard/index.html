@@ -74,6 +74,14 @@
       <div id="stage-help-content"></div>
     </dialog>
 
+    <!-- Run comparison overlays the stage view so live progress stays visible. -->
+    <div id="run-comparison-layer" class="drawer-layer" aria-hidden="true">
+      <button id="run-comparison-backdrop" class="drawer-backdrop" aria-label="Close run comparison"></button>
+      <aside id="run-comparison-drawer" class="comparison-drawer" aria-labelledby="run-comparison-title">
+        <div id="run-comparison-content"></div>
+      </aside>
+    </div>
+
     <script src="/app.js" defer></script>
   </body>
 </html>

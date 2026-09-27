@@ -27,6 +27,8 @@ const dialog = document.getElementById("example-dialog");
 const experimentSelect = document.getElementById("experiment-select");
 const stageHelpDialog = document.getElementById("stage-help-dialog");
 const stageHelpContent = document.getElementById("stage-help-content");
+const runComparisonLayer = document.getElementById("run-comparison-layer");
+const runComparisonContent = document.getElementById("run-comparison-content");
 
 const A1_STAGE_HELP = {
   search: {
@@ -539,6 +541,62 @@ function signedPercent(value) {
   return `${points >= 0 ? "+" : ""}${points.toFixed(1)} pp`;
 }
 
+
+/* Build a cross-run chart from recorded results. Missing stages stay hollow
+ * rather than becoming zero, which would falsely imply a completed result. */
+function runComparisonChart(runs) {
+  const stages = ["evolution", "validation", "heldout_test"];
+  const width = 760, height = 260, left = 55, right = 24, top = 30, bottom = 48;
+  const innerWidth = width - left - right, innerHeight = height - top - bottom;
+  const values = runs.flatMap(run => stages.map(stage => run.comparisons?.[stage]?.strict_prompt_delta).filter(value => value != null));
+  const largest = Math.max(0.05, ...values.map(value => Math.abs(Number(value))));
+  const limit = Math.ceil(largest * 100 / 5) * 5 / 100;
+  const y = value => top + ((limit - value) / (limit * 2)) * innerHeight;
+  const x = index => left + (index / Math.max(stages.length - 1, 1)) * innerWidth;
+  const zero = y(0);
+  const grid = [-limit, 0, limit].map(value => `<g><line x1="${left}" y1="${y(value)}" x2="${width-right}" y2="${y(value)}" stroke="${value === 0 ? "#a9adb5" : "#e8e8ef"}"/><text x="${left-9}" y="${y(value)+4}" text-anchor="end" fill="#686572" font-size="10">${value > 0 ? "+" : ""}${(value*100).toFixed(0)} pp</text></g>`).join("");
+  const colors = ["#1456a0", "#16855b", "#d97706", "#c93c48", "#6d4bc3"];
+  const series = runs.map((run, runIndex) => {
+    const points = stages.map((stage, stageIndex) => {
+      const value = run.comparisons?.[stage]?.strict_prompt_delta;
+      return value == null ? null : {x:x(stageIndex), y:y(Number(value)), value:Number(value)};
+    });
+    const linePoints = points.filter(Boolean).map(point => `${point.x},${point.y}`).join(" ");
+    const line = points.filter(Boolean).length > 1 ? `<polyline points="${linePoints}" fill="none" stroke="${colors[runIndex % colors.length]}" stroke-width="3"/>` : "";
+    const markers = points.map((point, index) => point
+      ? `<circle cx="${point.x}" cy="${point.y}" r="5" fill="${colors[runIndex % colors.length]}"><title>${escapeHtml(run.run_id)}: ${(point.value*100).toFixed(1)} pp</title></circle>`
+      : `<circle cx="${x(index)}" cy="${zero}" r="4" fill="#fff" stroke="#c8c8d2" stroke-width="2"><title>${escapeHtml(run.run_id)}: pending</title></circle>`).join("");
+    return line + markers;
+  }).join("");
+  const labels = stages.map((stage, index) => `<text x="${x(index)}" y="${height-18}" text-anchor="middle" fill="#4f4c57" font-size="11">${stage.replaceAll("_", " ")}</text>`).join("");
+  const legend = runs.map((run, index) => `<span><i style="background:${colors[index % colors.length]}"></i>${escapeHtml(run.proposer || "deterministic")} · ${escapeHtml(run.run_id)}</span>`).join("");
+  return `<div class="comparison-chart-legend">${legend}</div><svg class="run-comparison-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Strict prompt accuracy change across runs and evaluation stages">${grid}${series}${labels}</svg>`;
+}
+
+function renderRunComparisonDrawer(runs, selectedRunId, selectedStage) {
+  const completedStages = runs.reduce((total, run) => total + ["evolution", "validation", "heldout_test"].filter(stage => run.comparisons?.[stage]).length, 0);
+  const acceptedTotal = runs.reduce((total, run) => total + (run.decisions || []).filter(decision => decision.accepted).length, 0);
+  runComparisonContent.innerHTML = `<div class="drawer-header"><div><p class="eyebrow">experiment history</p><h2 id="run-comparison-title">A1 run comparison</h2><p>See whether repeated runs are producing measurable progress. Select any row to load its full stage evidence in the main view.</p></div><button class="drawer-close" id="run-comparison-close" aria-label="Close run comparison">×</button></div><div class="comparison-summary"><div><strong>${runs.length}</strong><span>runs preserved</span></div><div><strong>${acceptedTotal}</strong><span>prompt changes accepted</span></div><div><strong>${completedStages}</strong><span>final evaluations complete</span></div></div><section class="drawer-section"><div class="drawer-section-head"><div><h3>performance across runs</h3><p>Strict prompt accuracy change from the approved A0 baseline</p></div></div>${runComparisonChart(runs)}</section><section class="drawer-section"><div class="drawer-section-head"><div><h3>run evidence</h3><p>Pending means that run has not reached that evaluation stage.</p></div></div><div class="run-history-grid drawer-run-table"><div class="run-history-row run-history-head"><span>run</span><span>proposer</span><span>search</span><span>accepted</span><span>evolution</span><span>validation</span><span>heldout</span></div>${runs.map(item => { const decisions = item.decisions || []; const accepted = decisions.filter(decision => decision.accepted).length; const record = item.state || {}; return `<button class="run-history-row ${item.run_id === selectedRunId ? "active" : ""}" data-a1-run="${escapeHtml(item.run_id)}"><span class="run-id">${escapeHtml(item.run_id)}</span><strong>${escapeHtml(item.proposer || "deterministic")}</strong><span>${record.status || "not started"}</span><span>${accepted}</span><span>${item.comparisons?.evolution ? signedPercent(item.comparisons.evolution.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.validation ? signedPercent(item.comparisons.validation.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.heldout_test ? signedPercent(item.comparisons.heldout_test.strict_prompt_delta) : "pending"}</span></button>`; }).join("")}</div></section>`;
+  document.getElementById("run-comparison-close").addEventListener("click", closeRunComparisonDrawer);
+  runComparisonContent.querySelectorAll("[data-a1-run]").forEach(button => button.addEventListener("click", () => {
+    closeRunComparisonDrawer();
+    location.hash = `a1/${selectedStage}/${button.dataset.a1Run}`;
+  }));
+}
+
+function openRunComparisonDrawer() {
+  runComparisonLayer.classList.add("open");
+  runComparisonLayer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("drawer-open");
+  document.getElementById("run-comparison-close")?.focus();
+}
+
+function closeRunComparisonDrawer() {
+  runComparisonLayer.classList.remove("open");
+  runComparisonLayer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("drawer-open");
+}
+
 function renderA1() {
   const data = state.a1 || {};
   const config = data.config || {};
@@ -774,9 +832,8 @@ function renderA1() {
         <div class="run-control-title"><h2>${escapeHtml(run?.run_id || "new a1 run")}</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
         <p class="muted">Proposer: ${escapeHtml(runProposer)} · model: ${escapeHtml(proposerStatus.deepseek?.model || "not configured")} · API key: ${proposerStatus.deepseek?.configured ? "configured" : "not configured"}</p>
       </div>
-      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label><button class="button primary" id="a1-start" ${anyA1Running || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
+      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label>${runs.length > 1 ? `<button class="button secondary comparison-open" id="a1-compare-runs"><span class="comparison-icon" aria-hidden="true">↗</span> compare ${runs.length} runs</button>` : ""}<button class="button primary" id="a1-start" ${anyA1Running || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
     </div>
-    ${runs.length > 1 ? `<div class="card run-history"><div class="card-head"><div><h2>A1 run comparison</h2><p class="muted">Every experiment remains available. The selected row controls the stage views below.</p></div></div><div class="run-history-grid"><div class="run-history-row run-history-head"><span>run</span><span>proposer</span><span>search</span><span>accepted</span><span>evolution</span><span>validation</span><span>heldout</span></div>${runs.map(item => { const decisions = item.decisions || []; const accepted = decisions.filter(decision => decision.accepted).length; const record = item.state || {}; return `<button class="run-history-row ${item.run_id === run?.run_id ? "active" : ""}" data-a1-run="${escapeHtml(item.run_id)}"><span class="run-id">${escapeHtml(item.run_id)}</span><strong>${escapeHtml(item.proposer || "deterministic")}</strong><span>${record.status || "not started"}</span><span>${accepted} change${accepted === 1 ? "" : "s"}</span><span>${item.comparisons?.evolution ? signedPercent(item.comparisons.evolution.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.validation ? signedPercent(item.comparisons.validation.strict_prompt_delta) : "pending"}</span><span>${item.comparisons?.heldout_test ? signedPercent(item.comparisons.heldout_test.strict_prompt_delta) : "pending"}</span></button>`; }).join("")}</div></div>` : ""}
     <div class="card stage-pipeline" aria-label="Select A1 stage">
       ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
     </div>
@@ -844,9 +901,10 @@ function renderA1() {
   document.getElementById("a1-run-select").addEventListener("change", event => {
     location.hash = `a1/${selectedStage}/${event.target.value}`;
   });
-  document.querySelectorAll("[data-a1-run]").forEach(button => button.addEventListener("click", () => {
-    location.hash = `a1/${selectedStage}/${button.dataset.a1Run}`;
-  }));
+  if (runs.length > 1) {
+    renderRunComparisonDrawer(runs, run.run_id, selectedStage);
+    document.getElementById("a1-compare-runs").addEventListener("click", openRunComparisonDrawer);
+  }
   document.querySelectorAll("[data-stage-help]").forEach(button => button.addEventListener("click", () => {
     openStageHelp(button.dataset.stageHelp);
   }));
@@ -933,6 +991,10 @@ experimentSelect.addEventListener("change", async event => {
 window.addEventListener("hashchange", render);
 dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
 stageHelpDialog.querySelector(".dialog-close").addEventListener("click", () => stageHelpDialog.close());
+document.getElementById("run-comparison-backdrop").addEventListener("click", closeRunComparisonDrawer);
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && runComparisonLayer.classList.contains("open")) closeRunComparisonDrawer();
+});
 setInterval(async () => {
   if (["overview", "run", "a1", "system"].includes(state.view)) await refresh();
 }, 5000);
