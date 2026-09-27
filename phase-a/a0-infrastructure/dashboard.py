@@ -194,16 +194,17 @@ def a1_snapshot() -> dict[str, Any]:
             next_stage = "validation" if "validation" not in comparisons else "heldout_test" if "heldout_test" not in comparisons else None
         else:
             next_stage = "search"
-        active_evaluations = sorted(
+        all_evaluations = sorted(
             (
                 {"candidate_id": candidate.get("candidate_id"), **evaluation}
                 for candidate in candidates
                 for evaluation in candidate.get("evaluations", [])
-                if evaluation.get("status") == "running"
+                if candidate.get("candidate_id") != "a0-baseline"
             ),
             key=lambda item: item.get("updated_at") or "",
             reverse=True,
         )
+        active_evaluations = [item for item in all_evaluations if item.get("status") == "running"]
         runs.append({
             "run_id": run_dir.name,
             "state": state,
@@ -213,6 +214,7 @@ def a1_snapshot() -> dict[str, Any]:
             "next_stage": next_stage,
             "complete": next_stage is None,
             "active_evaluation": active_evaluations[0] if active_evaluations else None,
+            "latest_evaluation": all_evaluations[0] if all_evaluations else None,
         })
     return {"config": config, "runs": runs, "control": reconcile_process()}
 
