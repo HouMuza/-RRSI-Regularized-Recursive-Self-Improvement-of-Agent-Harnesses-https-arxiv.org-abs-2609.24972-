@@ -74,7 +74,6 @@ h3 { font-size: 14px; }
 .card-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
 .card-head h2, .card-head h3 { margin: 0; }
 .kpi label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
-.kpi { border-top: 3px solid #aac8e8; }
 .kpi strong { display: block; font-size: 26px; letter-spacing: -.03em; color: #24212a; }
 .kpi small { display: block; color: var(--muted); margin-top: 6px; }
 .status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; background: #ececf1; color: #5d5a65; }
@@ -121,7 +120,7 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .artifact-hash { font: 10px ui-monospace, monospace; color: var(--faint); word-break: break-all; }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
-.a1-live { margin-bottom: 14px; border-top: 3px solid var(--purple); }
+.a1-live { margin-bottom: 14px; }
 .a1-progress-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin-top: 10px; color: var(--muted); font-size: 12px; }
 .a1-progress-meta strong { color: var(--text); }
 
