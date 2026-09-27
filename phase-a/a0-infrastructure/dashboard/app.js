@@ -210,6 +210,24 @@ function generationProgressChart(history, baselineScore) {
   </svg>`;
 }
 
+function splitComparisonChart(comparisons) {
+  const names = ["evolution", "validation", "heldout_test"];
+  const rows = names.filter(name => comparisons?.[name]).map(name => ({name, ...comparisons[name]}));
+  if (!rows.length) return `<div class="chart-empty">Final split comparisons will appear here.</div>`;
+  const width = 760, height = 245, left = 55, right = 20, top = 22, bottom = 48;
+  const y = value => top + (1 - Number(value || 0)) * (height - top - bottom);
+  const groupWidth = (width - left - right) / rows.length;
+  const grid = [0, .25, .5, .75, 1].map(value => `<g><line x1="${left}" y1="${y(value)}" x2="${width-right}" y2="${y(value)}" stroke="#e6e8ec"/><text x="13" y="${y(value)+4}" fill="#6d7179" font-size="10">${value*100}%</text></g>`).join("");
+  const groups = rows.map((row, index) => {
+    const center = left + groupWidth * index + groupWidth / 2;
+    const baseline = Number(row.baseline_strict_prompt_accuracy || 0);
+    const candidate = Number(row.candidate_strict_prompt_accuracy || 0);
+    const barWidth = Math.min(42, groupWidth / 4);
+    return `<g><rect x="${center-barWidth-3}" y="${y(baseline)}" width="${barWidth}" height="${y(0)-y(baseline)}" fill="#8ca8c7"/><rect x="${center+3}" y="${y(candidate)}" width="${barWidth}" height="${y(0)-y(candidate)}" fill="#1877f2"/><text x="${center-barWidth/2-3}" y="${y(baseline)-7}" text-anchor="middle" fill="#52657a" font-size="11">${(baseline*100).toFixed(1)}%</text><text x="${center+barWidth/2+3}" y="${y(candidate)-7}" text-anchor="middle" fill="#1456a0" font-size="11">${(candidate*100).toFixed(1)}%</text><text x="${center}" y="${height-18}" text-anchor="middle" fill="#555b66" font-size="11">${escapeHtml(row.name.replaceAll("_", " "))}</text></g>`;
+  }).join("");
+  return `<svg class="split-comparison-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Baseline and selected prompt accuracy by evaluation split">${grid}${groups}<text x="${width-190}" y="14" fill="#52657a" font-size="10">■ baseline</text><text x="${width-105}" y="14" fill="#1456a0" font-size="10">■ selected prompt</text></svg>`;
+}
+
 function kpi(label, value, detail = "") {
   return `<div class="card kpi"><label>${escapeHtml(label)}</label><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
 }
@@ -660,6 +678,9 @@ function renderA1() {
     {label: "validation", status: comparisons.validation ? "complete" : finalSplit === "validation" && evaluationInProgress ? "running" : "waiting", progress: comparisons.validation ? 100 : finalSplit === "validation" ? activity?.percent || 0 : 0},
     {label: "heldout test", status: comparisons.heldout_test ? "complete" : finalSplit === "heldout_test" && evaluationInProgress ? "running" : "waiting", progress: comparisons.heldout_test ? 100 : finalSplit === "heldout_test" ? activity?.percent || 0 : 0},
   ];
+  const latestComparisonName = comparisons.heldout_test ? "heldout test" : comparisons.validation ? "validation" : comparisons.evolution ? "evolution" : null;
+  const latestComparison = comparisons.heldout_test || comparisons.validation || comparisons.evolution;
+  const retainedBaseline = stateRecord.winner_id === "a0-baseline";
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
     <div class="card run-control-top">
@@ -673,7 +694,8 @@ function renderA1() {
     <div class="card stage-pipeline">
       ${pipeline.map((item, index) => `<div class="pipeline-stage ${item.status}"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></div>`).join("")}
     </div>
-    <div class="card experiment-brief">
+    ${latestComparison ? `<div class="card evaluation-insight"><div><p class="eyebrow">latest scientific result</p><h2>${escapeHtml(latestComparisonName)}: ${signedPercent(latestComparison.strict_prompt_delta)} change</h2><p>${retainedBaseline ? `Search retained the original prompt, so ${escapeHtml(latestComparisonName)} measured the same prompt on both sides. Both scored ${formatPercent(latestComparison.baseline_strict_prompt_accuracy)}. This confirms reproducibility and cannot demonstrate improvement.` : `The selected prompt scored ${formatPercent(latestComparison.candidate_strict_prompt_accuracy)} versus ${formatPercent(latestComparison.baseline_strict_prompt_accuracy)} for the baseline.`}</p><strong>${comparisons.heldout_test ? "A1 evaluation is complete." : comparisons.validation ? "Validation is complete. The heldout test is next." : "Evolution evaluation is complete. Validation is next."}</strong></div>${splitComparisonChart(comparisons)}</div>` : ""}
+    <div class="card experiment-brief ${!evaluationInProgress && nextStage !== "search" ? "hidden" : ""}">
       <p class="eyebrow">what is happening now</p>
       <h2>${escapeHtml(activeHeadline)}</h2>
       <p class="brief-lead">${escapeHtml(activeComparison)}</p>

@@ -197,6 +197,14 @@ def a1_snapshot() -> dict[str, Any]:
                 progress_history = store.read_jsonl(evaluation_dir / "progress.jsonl")
                 responses = store.read_jsonl(evaluation_dir / "raw_responses.jsonl")
                 official_results = store.read_jsonl(evaluation_dir / "eval_results_strict.jsonl")
+                metrics_path = evaluation_dir / "metrics.json"
+                # Reused baseline responses can complete without a progress
+                # file. Fall back to the final metrics timestamp so that a
+                # finished validation or heldout stage becomes the latest
+                # visible evaluation instead of an older search candidate.
+                updated_at = progress.get("updated_at")
+                if not updated_at and metrics_path.exists():
+                    updated_at = datetime.datetime.fromtimestamp(metrics_path.stat().st_mtime, tz=datetime.timezone.utc).isoformat()
                 completed = len(responses) or len(official_results) or int(progress.get("completed") or 0)
                 total = int(progress.get("total") or completed)
                 evaluation_summaries.append({
@@ -215,7 +223,7 @@ def a1_snapshot() -> dict[str, Any]:
                     "loose_prompt_accuracy": metrics.get("loose", {}).get("prompt_accuracy", progress.get("loose_prompt_accuracy")),
                     "examples_per_second": progress.get("examples_per_second"),
                     "eta_seconds": (max(total - completed, 0) / progress["examples_per_second"]) if progress.get("examples_per_second") else None,
-                    "updated_at": progress.get("updated_at"),
+                    "updated_at": updated_at,
                     "progress_history": progress_history,
                 })
             candidate["evaluations"] = evaluation_summaries
@@ -234,7 +242,12 @@ def a1_snapshot() -> dict[str, Any]:
                 {"candidate_id": candidate.get("candidate_id"), **evaluation}
                 for candidate in candidates
                 for evaluation in candidate.get("evaluations", [])
-                if candidate.get("candidate_id") != "a0-baseline"
+                # Search screens exclude the baseline from the candidate feed,
+                # but final evolution, validation, and heldout evaluations may
+                # legitimately use the baseline as the frozen winner. Keep
+                # those final stages visible so the dashboard does not fall
+                # back to an old search candidate after evaluation completes.
+                if candidate.get("candidate_id") != "a0-baseline" or str(evaluation.get("stage", "")).startswith("final-")
             ),
             key=lambda item: item.get("updated_at") or "",
             reverse=True,
