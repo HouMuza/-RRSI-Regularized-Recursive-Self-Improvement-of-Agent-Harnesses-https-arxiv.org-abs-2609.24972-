@@ -10,6 +10,7 @@ const state = {
   selectedRun: null,
   examples: null,
   logs: null,
+  a1: null,
   view: location.hash.slice(1) || "overview",
 };
 
@@ -103,9 +104,9 @@ function updateChrome() {
   const running = Boolean(control.alive);
   document.getElementById("system-pulse").className = `pulse ${running ? "running" : ""}`;
   document.getElementById("system-label").textContent = running
-    ? `${control.run_id} / ${control.split} is running`
+    ? `${control.run_id} / ${control.stage || control.split} is running`
     : "local runner idle";
-  startButton.classList.toggle("hidden", running);
+  startButton.classList.toggle("hidden", running || state.view === "a1");
   stopButton.classList.toggle("hidden", !running);
   const nextSplit = nextRunnableSplit();
   if (!running) {
@@ -343,13 +344,85 @@ async function renderSystem() {
   document.getElementById("refresh-log").addEventListener("click", async () => { state.logs = await api("/api/logs"); renderSystem(); });
 }
 
+function signedPercent(value) {
+  if (value == null) return "pending";
+  const points = Number(value) * 100;
+  return `${points >= 0 ? "+" : ""}${points.toFixed(1)} pp`;
+}
+
+function renderA1() {
+  const data = state.a1 || {};
+  const config = data.config || {};
+  const runs = data.runs || [];
+  const run = runs[0];
+  const control = data.control || {};
+  const runningThisRun = Boolean(control.alive && control.phase === "a1");
+  const search = config.search || {};
+  const stateRecord = run?.state || {};
+  const candidates = run?.candidates || [];
+  const comparisons = run?.comparisons || {};
+  const nextStage = run?.next_stage || "search";
+  const actionLabel = runningThisRun
+    ? `${control.stage} running`
+    : run?.complete ? "start new a1 run" : `${stateRecord.status === "running" ? "resume" : "start"} ${nextStage}`;
+  const comparisonCards = ["evolution", "validation", "heldout_test"].map(name => {
+    const item = comparisons[name];
+    return item
+      ? kpi(name.replaceAll("_", " "), signedPercent(item.strict_prompt_delta), `${formatPercent(item.candidate_strict_prompt_accuracy)} winner · 95% CI ${signedPercent(item.strict_prompt_delta_ci95?.[0])} to ${signedPercent(item.strict_prompt_delta_ci95?.[1])}`)
+      : kpi(name.replaceAll("_", " "), "pending", "paired against the approved a0 baseline");
+  }).join("");
+  content.innerHTML = `
+    <div class="grid main-side">
+      <div class="card">
+        <div class="card-head"><div><p class="eyebrow">prompt-only recursive improvement</p><h2>a1 evolution protocol</h2></div>${statusBadge(run?.complete ? "complete" : runningThisRun ? "running" : run ? stateRecord.status || "ready" : "ready")}</div>
+        <p class="muted">Three generations. Four children per generation. Only the system prompt may change. Validation and heldout results cannot select a candidate.</p>
+        <div class="kv">
+          <div>baseline</div><div class="run-id">${escapeHtml(config.experiment?.baseline_run_id || "a0")}</div>
+          <div>primary metric</div><div>${escapeHtml(config.experiment?.primary_metric || "strict prompt accuracy")}</div>
+          <div>screen panel</div><div>${escapeHtml(search.screen_examples || 0)} evolution examples</div>
+          <div>confirmation panel</div><div>${escapeHtml(search.confirmation_examples || 0)} evolution examples</div>
+          <div>acceptance rule</div><div>positive paired confirmation delta</div>
+          <div>current incumbent</div><div class="run-id">${escapeHtml(stateRecord.incumbent_id || "a0-baseline")}</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>run control</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
+        <p class="muted">A1 is resumable. Every candidate response, rejection, and acceptance is written before the next stage begins.</p>
+        <button class="button primary" id="a1-start" ${runningThisRun ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
+        ${run ? `<p class="run-id section">${escapeHtml(run.run_id)}</p>` : ""}
+      </div>
+    </div>
+    <div class="grid kpis section">${comparisonCards}</div>
+    <div class="grid two section">
+      <div class="card flush">
+        <div class="card-head" style="padding:16px;margin:0"><h2>candidate ledger</h2><span class="muted">${candidates.length} candidates recorded</span></div>
+        <table><thead><tr><th>candidate</th><th>parent</th><th>generation</th><th>status</th><th>prompt words</th><th>evaluations</th></tr></thead><tbody>
+          ${candidates.length ? candidates.map(candidate => `<tr><td class="run-id">${escapeHtml(candidate.candidate_id)}</td><td class="run-id">${escapeHtml(candidate.parent_id || "root")}</td><td>${escapeHtml(candidate.generation)}</td><td>${statusBadge(candidate.status)}</td><td>${escapeHtml(candidate.prompt_words || 0)}</td><td>${candidate.evaluations?.length || 0}</td></tr>`).join("") : `<tr><td colspan="6" class="empty">Candidates appear when search starts.</td></tr>`}
+        </tbody></table>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>selection lineage</h2><span class="muted">immutable decisions</span></div>
+        ${(run?.decisions || []).length ? run.decisions.map(item => `<div class="check ${item.accepted ? "passed" : ""}"><span class="icon">${item.accepted ? "✓" : "×"}</span><div><strong>generation ${item.generation}: ${escapeHtml(item.selected_candidate_id)}</strong><small>${signedPercent(item.strict_prompt_delta)} · ${escapeHtml(item.reason)}</small></div></div>`).join("") : `<div class="empty">No selection decisions yet.</div>`}
+      </div>
+    </div>`;
+  document.getElementById("a1-start").addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    try {
+      const useExistingRun = run && !run.complete;
+      const result = await api("/api/a1/start", {method:"POST", body:JSON.stringify({run_id:useExistingRun ? run.run_id : null, stage:useExistingRun ? nextStage : "search"})});
+      showBanner(result.message);
+      await refresh();
+    } catch (error) { showBanner(error.message, "error"); event.currentTarget.disabled = false; }
+  });
+}
+
 function bindNavigationButtons() {
   document.querySelectorAll("[data-nav]").forEach(button => button.addEventListener("click", () => { location.hash = button.dataset.nav; }));
 }
 
 async function render() {
   state.view = location.hash.slice(1) || "overview";
-  const labels = {overview:"overview", runs:"run registry", run:"run detail", examples:"example browser", compare:"compare runs", gate:"a0 evidence gate", system:"system and logs"};
+  const labels = {overview:"overview", runs:"run registry", run:"run detail", examples:"example browser", compare:"compare runs", gate:"a0 evidence gate", a1:"a1 prompt evolution", system:"system and logs"};
   title.textContent = labels[state.view] || state.view;
   updateChrome();
   if (state.view === "overview") renderOverview();
@@ -358,6 +431,7 @@ async function render() {
   else if (state.view === "examples") await loadExamples();
   else if (state.view === "compare") renderCompare();
   else if (state.view === "gate") renderGate();
+  else if (state.view === "a1") renderA1();
   else if (state.view === "system") await renderSystem();
   else { location.hash = "overview"; }
 }
@@ -365,6 +439,7 @@ async function render() {
 async function refresh() {
   try {
     state.overview = await api("/api/overview");
+    state.a1 = await api("/api/a1");
     const currentId = state.selectedRun?.run_id || state.overview.runs?.[0]?.run_id;
     state.selectedRun = currentId ? await api(`/api/runs/${encodeURIComponent(currentId)}`) : null;
     state.examples = null;
@@ -403,6 +478,6 @@ refreshButton.addEventListener("click", refresh);
 window.addEventListener("hashchange", render);
 dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
 setInterval(async () => {
-  if (["overview", "run", "system"].includes(state.view)) await refresh();
+  if (["overview", "run", "a1", "system"].includes(state.view)) await refresh();
 }, 5000);
 refresh();

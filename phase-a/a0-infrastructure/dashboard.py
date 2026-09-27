@@ -23,6 +23,8 @@ import experiment_store as store
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = ROOT / "phase-a/a0-infrastructure/dashboard"
 RUNNER = ROOT / "phase-a/a0-infrastructure/run_a0.py"
+A1_RUNNER = ROOT / "phase-a/a1-prompt-evolution/run_a1.py"
+A1_RUNS_ROOT = ROOT / "runs/a1"
 PYTHON = ROOT / ".venv/bin/python"
 DEFAULT_RUN_ID = "a0-20260926-180736"
 CONTROL_PATH = store.CONTROL_PATH
@@ -147,13 +149,107 @@ def start_runner(run_id: str, split: str) -> tuple[bool, str]:
         return True, f"Started {run_id} / {split}."
 
 
+def a1_snapshot() -> dict[str, Any]:
+    """Summarize A1 protocol, candidates, decisions, and comparisons."""
+    config = store.read_json(ROOT / "phase-a/a1-prompt-evolution/config.json", {})
+    experiments = A1_RUNS_ROOT / "experiments"
+    run_dirs = sorted((path for path in experiments.glob("a1-*") if path.is_dir()), reverse=True) if experiments.exists() else []
+    runs = []
+    for run_dir in run_dirs:
+        state = store.read_json(run_dir / "search_state.json", {})
+        candidates = []
+        for path in sorted((run_dir / "candidates").glob("*/candidate.json")) if (run_dir / "candidates").exists() else []:
+            candidate = store.read_json(path, {})
+            evaluation_summaries = []
+            for metrics_path in sorted(path.parent.glob("evaluations/*/metrics.json")):
+                metrics = store.read_json(metrics_path, {})
+                evaluation_summaries.append({
+                    "stage": metrics_path.parent.name,
+                    "strict_prompt_accuracy": metrics.get("strict", {}).get("prompt_accuracy"),
+                    "strict_instruction_accuracy": metrics.get("strict", {}).get("instruction_accuracy"),
+                })
+            candidate["evaluations"] = evaluation_summaries
+            candidates.append(candidate)
+        decisions = [store.read_json(path, {}) for path in sorted((run_dir / "generations").glob("*.json"))] if (run_dir / "generations").exists() else []
+        comparisons = {
+            path.stem: store.read_json(path, {})
+            for path in sorted((run_dir / "comparisons").glob("*.json"))
+        } if (run_dir / "comparisons").exists() else {}
+        if state.get("status") == "complete":
+            next_stage = "validation" if "validation" not in comparisons else "heldout_test" if "heldout_test" not in comparisons else None
+        else:
+            next_stage = "search"
+        runs.append({
+            "run_id": run_dir.name,
+            "state": state,
+            "candidates": candidates,
+            "decisions": decisions,
+            "comparisons": comparisons,
+            "next_stage": next_stage,
+            "complete": next_stage is None,
+        })
+    return {"config": config, "runs": runs, "control": reconcile_process()}
+
+
+def start_a1_runner(run_id: str | None, stage: str) -> tuple[bool, str, str]:
+    """Launch one resumable A1 protocol stage under the shared process guard."""
+    global ACTIVE_PROCESS, ACTIVE_LOG
+    with PROCESS_LOCK:
+        current = reconcile_process()
+        if current.get("alive"):
+            return False, f"Runner {current.get('pid')} is already active.", str(run_id or "")
+        if stage not in {"search", "validation", "heldout_test"}:
+            return False, "The requested A1 stage is invalid.", str(run_id or "")
+        if not run_id:
+            run_id = datetime.datetime.now().strftime("a1-%Y%m%d-%H%M%S")
+        normalized = run_id.removeprefix("a1-").replace("-", "")
+        if not run_id.startswith("a1-") or not normalized.isdigit():
+            return False, "The requested A1 run id is invalid.", run_id
+        if not A1_RUNNER.exists() or not PYTHON.exists():
+            return False, "The A1 runner or project Python environment is missing.", run_id
+
+        # The server derives the legal next stage from durable evidence rather
+        # than trusting the browser. This keeps validation and held-out data
+        # outside candidate selection even when an old tab submits stale data.
+        run_dir = A1_RUNS_ROOT / "experiments" / run_id
+        state = store.read_json(run_dir / "search_state.json", {})
+        comparisons_dir = run_dir / "comparisons"
+        expected_stage = "search"
+        if state.get("status") == "complete":
+            expected_stage = "validation" if not (comparisons_dir / "validation.json").exists() else "heldout_test" if not (comparisons_dir / "heldout_test.json").exists() else "complete"
+        if expected_stage == "complete":
+            return False, "Every A1 stage is already complete.", run_id
+        stage = expected_stage
+
+        log_dir = A1_RUNS_ROOT / "dashboard"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{run_id}-{stage}-{int(time.time())}.log"
+        ACTIVE_LOG = log_path.open("a", encoding="utf-8")
+        command = [str(PYTHON), str(A1_RUNNER), "--run-id", run_id, "--stage", stage]
+        environment = os.environ.copy()
+        environment.setdefault("NLTK_DATA", str(store.RUNS_ROOT / "nltk_data"))
+        try:
+            ACTIVE_PROCESS = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=ACTIVE_LOG, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+        except OSError as error:
+            ACTIVE_LOG.close()
+            ACTIVE_LOG = None
+            return False, f"Could not launch the A1 runner: {error}", run_id
+        control = {
+            "pid": ACTIVE_PROCESS.pid, "run_id": run_id, "phase": "a1", "stage": stage,
+            "status": "running", "alive": True, "started_at": utc_now(),
+            "log_path": str(log_path.relative_to(ROOT)), "command": command,
+        }
+        atomic_json(CONTROL_PATH, control)
+        return True, f"Started {run_id} / {stage}.", run_id
+
+
 def stop_runner() -> tuple[bool, str]:
     """Request graceful termination of the exact PID in the control record."""
     with PROCESS_LOCK:
         control = reconcile_process()
         pid = control.get("pid")
         if not control.get("alive") or not pid:
-            return False, "No active A0 runner was found."
+            return False, "No active experiment runner was found."
         try:
             os.kill(int(pid), signal.SIGTERM)
         except OSError as error:
@@ -278,6 +374,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "ui_url": "http://127.0.0.1:5000",
             })
             return
+        if path == "/api/a1":
+            self.send_json(a1_snapshot())
+            return
         if path == "/api/artifact":
             self.serve_artifact(
                 query.get("run_id", [""])[0],
@@ -299,6 +398,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if self.path == "/api/runs/stop":
                 ok, message = stop_runner()
                 self.send_json({"ok": ok, "message": message, "control": reconcile_process()}, 200 if ok else 409)
+                return
+            if self.path == "/api/a1/start":
+                run_id = str(body.get("run_id") or "") or None
+                stage = str(body.get("stage") or "search")
+                ok, message, resolved_run_id = start_a1_runner(run_id, stage)
+                self.send_json({"ok": ok, "message": message, "run_id": resolved_run_id, "control": reconcile_process()}, 200 if ok else 409)
                 return
             if self.path == "/api/gate":
                 run_id = str(body.get("run_id") or "")

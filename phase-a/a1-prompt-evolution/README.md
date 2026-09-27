@@ -13,8 +13,19 @@ may inspect only the information allowed by the pre-registered protocol.
 
 ## start condition
 
-a0 is complete, its evidence pack is reproducible, and the project owner has
-explicitly approved the a0 gate. This directory is a plan only until then.
+a0 is complete, its evidence pack is reproducible, and the project owner
+approved the a0 gate on 2026-09-27. The frozen protocol is recorded in
+[`preregistration.md`](preregistration.md) and [`config.json`](config.json).
+
+## execution stages
+
+1. `search` runs three recursive generations on nested evolution panels and
+   evaluates the selected incumbent on the complete evolution split.
+2. `validation` evaluates the frozen winner without changing selection.
+3. `heldout_test` performs the final transfer measurement.
+
+The runner writes ignored evidence under `runs/a1/experiments/`. Checked-in
+source and documentation never contain generated benchmark responses.
 
 ## required outputs
 
@@ -22,3 +33,46 @@ Keep the initial prompt, every proposed prompt and rationale, parent and child
 lineage, evaluation outcomes, selection decisions, failed candidates, cost,
 and final held-out results. Include a frozen baseline comparison and uncertainty
 estimates.
+
+## running a1
+
+Use the `a1 evolution` page in the local experiment console. The button follows
+the registered sequence and resumes the latest unfinished run:
+
+1. `start search`
+2. `start validation`
+3. `start heldout test`
+
+The equivalent commands are:
+
+```bash
+.venv/bin/python phase-a/a1-prompt-evolution/run_a1.py \
+  --run-id a1-YYYYMMDD-HHMMSS --stage search
+.venv/bin/python phase-a/a1-prompt-evolution/run_a1.py \
+  --run-id a1-YYYYMMDD-HHMMSS --stage validation
+.venv/bin/python phase-a/a1-prompt-evolution/run_a1.py \
+  --run-id a1-YYYYMMDD-HHMMSS --stage heldout_test
+```
+
+Do not create a new run id between stages. Search can be interrupted and
+resumed because complete response records, candidate definitions, generation
+decisions, and metrics are durable.
+
+## evidence layout
+
+```text
+runs/a1/experiments/<run-id>/
+  manifest.json
+  mlflow.json
+  search_state.json
+  candidates/<candidate-id>/candidate.json
+  candidates/<candidate-id>/evaluations/<stage>/
+  generations/g01.json
+  comparisons/evolution.json
+  comparisons/validation.json
+  comparisons/heldout_test.json
+```
+
+The comparison records report paired score differences and deterministic
+bootstrap intervals. MLflow mirrors searchable parameters, stage metrics, and
+the evidence tree. JSON and JSONL files remain canonical.

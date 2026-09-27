@@ -10,7 +10,7 @@ owner approves its gate.
 
 | Track | Purpose | Current state |
 | --- | --- | --- |
-| phase a | Establish and study recursive self-improvement | a0 setup |
+| phase a | Establish and study recursive self-improvement | a1 ready |
 | phase b | Test evolution of rules, code, models, and agent structures | Locked |
 | phase c | Build a simulated bank as a separate world model | Locked |
 | phase d | Combine the validated evolutionary system with the bank | Locked |

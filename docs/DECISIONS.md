@@ -3,6 +3,21 @@
 Record research and implementation decisions that affect comparability or
 future interpretation. Add new entries at the top.
 
+## 2026-09-27: preregister a1 prompt-only evolution
+
+- **Decision:** Run three generations of deterministic prompt mutation with
+  four children per generation. Screen on 32 evolution examples, confirm two
+  finalists on 96 examples, and accept only a positive paired strict prompt
+  accuracy delta.
+- **Reason:** Exercise recursive proposal, lineage, evaluation, and selection
+  with one mutable component while keeping local compute bounded.
+- **Constraint:** Only the system prompt may change. Validation cannot alter
+  selection. Held-out evaluation occurs once after validation. A1 is a scoped
+  prompt evolution baseline and is not a full reproduction of the RRSI paper.
+- **Evidence:** See
+  [`phase-a/a1-prompt-evolution/preregistration.md`](../phase-a/a1-prompt-evolution/preregistration.md).
+- **Decision owner:** Project owner.
+
 ## 2026-09-26: use a local experiment console and MLflow ledger
 
 - **Decision:** Use the project console for RRSI-specific run control,
