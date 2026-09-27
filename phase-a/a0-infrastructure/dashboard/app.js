@@ -657,7 +657,7 @@ function renderA1() {
     : activity?.stage?.includes("screen") ? "screening" : activity?.stage?.includes("final") ? "full evaluation" : "evaluation";
   const actionLabel = runningThisRun
     ? `${control.stage} running`
-    : run?.complete ? proposerStatus.deepseek?.configured ? "start deepseek a1 run" : "deepseek key required" : `${run ? "resume" : "start"} ${nextStage}`;
+    : run?.complete ? proposerStatus.deepseek?.configured ? "new deepseek replicate" : "deepseek key required" : `${run ? "resume" : "start"} ${nextStage}`;
   const comparisonCards = ["evolution", "validation", "heldout_test"].map(name => {
     const item = comparisons[name];
     return item
@@ -857,8 +857,9 @@ function renderA1() {
         <p class="eyebrow">run control</p>
         <div class="run-control-title"><h2>${escapeHtml(run?.run_id || "new a1 run")}</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
         <p class="muted">Proposer: ${escapeHtml(runProposer)} · model: ${escapeHtml(proposerStatus.deepseek?.model || "not configured")} · API key: ${proposerStatus.deepseek?.configured ? "configured" : "not configured"}</p>
+        ${run?.complete ? `<p class="run-complete-note"><strong>This run is finished.</strong> Search, evolution, validation, and heldout evidence are saved. The action on the right creates a separate replicate with a new run id.</p>` : ""}
       </div>
-      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label>${runs.length > 1 ? `<button class="button secondary comparison-open" id="a1-compare-runs"><span class="comparison-icon" aria-hidden="true">↗</span> compare ${runs.length} runs</button>` : ""}<button class="button primary" id="a1-start" ${anyA1Running || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
+      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label>${runs.length > 1 ? `<button class="button secondary comparison-open" id="a1-compare-runs"><span class="comparison-icon" aria-hidden="true">↗</span> compare ${runs.length} runs</button>` : ""}<button class="button ${run?.complete ? "secondary" : "primary"}" id="a1-start" ${anyA1Running || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
     </div>
     <div class="card stage-pipeline" aria-label="Select A1 stage">
       ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
