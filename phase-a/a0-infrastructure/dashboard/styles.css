@@ -83,6 +83,10 @@ h3 { font-size: 14px; }
 .status.screened-out { color: #725d2d; }
 
 .ledger-heading p { margin: 5px 0 0; }
+.generation-history { display: grid; }
+.history-row { display: grid; grid-template-columns: 95px 90px 70px 70px 80px minmax(110px, 1fr); gap: 10px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.history-head { color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+.history-row.provisional { font-style: italic; }
 .status.interrupted, .status.partial, .status.stopping { color: #865506; }
 .progress { height: 8px; border-radius: 99px; background: #e9e8ee; overflow: hidden; }
 .progress > span { height: 100%; display: block; background: linear-gradient(90deg, #1456a0, #3478be); }

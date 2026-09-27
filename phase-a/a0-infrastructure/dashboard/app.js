@@ -522,6 +522,59 @@ function renderA1() {
     if (!selectedResult || !parentResult) return decision.reason;
     return `${decision.selected_candidate_id} was the strongest finalist at ${formatPercent(selectedResult.strict_prompt_accuracy)}. The parent scored ${formatPercent(parentResult.strict_prompt_accuracy)}, so ${decision.accepted ? "the candidate became the new parent" : "the existing parent was kept"}.`;
   };
+  // Keep one durable row for every generation. The live candidate is appended
+  // as provisional evidence, rather than replacing the completed history.
+  const generationHistory = completedDecisions.map(decision => {
+    const selected = candidatesById.get(decision.selected_candidate_id);
+    const parent = candidatesById.get(decision.parent_id);
+    const stage = `g${String(decision.generation).padStart(2, "0")}-confirmation`;
+    const selectedResult = (selected?.evaluations || []).find(item => item.stage === stage);
+    const parentResult = (parent?.evaluations || []).find(item => item.stage === stage);
+    return {
+      generation: Number(decision.generation),
+      candidateId: decision.selected_candidate_id,
+      candidateScore: selectedResult?.strict_prompt_accuracy,
+      parentScore: parentResult?.strict_prompt_accuracy,
+      delta: decision.strict_prompt_delta,
+      outcome: decision.accepted ? "new prompt adopted" : "parent kept",
+      provisional: false,
+    };
+  });
+  if (stageLabel === "confirmation" && !measuringParent && activity && !decisionsByGeneration.has(activeGeneration)) {
+    const historyParent = candidatesById.get(stateRecord.incumbent_id || "a0-baseline");
+    const historyParentEvaluation = (historyParent?.evaluations || []).find(item => item.stage === activity.stage);
+    const historyDelta = activity.strict_prompt_accuracy != null && historyParentEvaluation?.strict_prompt_accuracy != null
+      ? activity.strict_prompt_accuracy - historyParentEvaluation.strict_prompt_accuracy
+      : null;
+    generationHistory.push({
+      generation: activeGeneration,
+      candidateId: activity.candidate_id,
+      candidateScore: activity.strict_prompt_accuracy,
+      parentScore: historyParentEvaluation?.strict_prompt_accuracy,
+      delta: historyDelta,
+      outcome: "still being measured",
+      provisional: true,
+    });
+  }
+  const confirmationCandidates = candidates.flatMap(candidate => (candidate.evaluations || [])
+    .filter(item => item.stage?.includes("confirmation") && candidate.candidate_id !== "a0-baseline")
+    .map(item => {
+      const generation = Number(item.stage.match(/^g(\d+)/)?.[1] || candidate.generation);
+      const parent = candidatesById.get(candidate.parent_id);
+      const parentResult = (parent?.evaluations || []).find(parentItem => parentItem.stage === item.stage);
+      const delta = item.strict_prompt_accuracy != null && parentResult?.strict_prompt_accuracy != null
+        ? item.strict_prompt_accuracy - parentResult.strict_prompt_accuracy
+        : null;
+      const decision = decisionsByGeneration.get(generation);
+      return {candidate, item, generation, parentResult, delta, decision};
+    }))
+    .sort((left, right) => left.generation - right.generation || left.candidate.candidate_id.localeCompare(right.candidate.candidate_id));
+  const activeConfirmationPosition = confirmationCandidates.filter(record => record.generation === activeGeneration).length;
+  const activeRunLabel = measuringParent
+    ? "parent benchmark"
+    : stageLabel === "confirmation"
+      ? `finalist ${Math.max(activeConfirmationPosition, 1)} of 2`
+      : `candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}`;
   const parentCandidate = candidates.find(candidate => candidate.candidate_id === (stateRecord.incumbent_id || "a0-baseline")) || candidates.find(candidate => candidate.candidate_id === "a0-baseline");
   const parentEvaluation = [...(parentCandidate?.evaluations || [])].reverse().find(item => item.stage === activity?.stage);
   const latestDecision = completedDecisions.at(-1);
@@ -561,8 +614,8 @@ function renderA1() {
       <p><strong>What happens next:</strong> ${escapeHtml(nextExplanation)}</p>
       <div class="plain-conclusion"><strong>Current conclusion:</strong> ${escapeHtml(currentGenerationDecided ? findingDetail : "No improvement has been confirmed yet.")} <span>${runProposer === "deepseek" ? `DeepSeek ${escapeHtml(proposerStatus.deepseek?.model || "")} proposes the changes; IFEval scores them.` : "This control run uses a fixed mutation bank. DeepSeek will be used in the separately registered run."}</span></div>
     </div>
-    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? "evolution is active" : runningThisRun ? "candidate complete · next candidate starting" : "latest candidate evaluation"}</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${measuringParent ? "parent benchmark" : `candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}`}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next candidate is still to run" : "evaluation complete"}</span></div></div>` : ""}
-    ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>${evaluationInProgress ? "live" : "latest"} candidate quality</h2><span class="muted">checkpoint estimates for the candidate currently being measured</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}<p class="chart-note">Strict prompt accuracy is the selection metric. A prompt passes only when every instruction in that example passes. Live values update at verifier checkpoints, so generated and scored counts can differ.</p></div><div class="card"><div class="card-head"><h2>generation ${activeGeneration}: candidate versus parent</h2><span class="muted">click a measured row for evidence</span></div><table><thead><tr><th>candidate and change</th><th>evidence</th><th>strict prompt</th><th>delta</th></tr></thead><tbody><tr ${parentEvaluation ? `class="drilldown-row" data-a1-candidate="${escapeHtml(parentCandidate.candidate_id)}" data-a1-stage="${escapeHtml(parentEvaluation.stage)}"` : ""}><td><span class="run-id">${escapeHtml(parentCandidate?.candidate_id || "parent")}</span><small class="table-subline">current parent benchmark</small></td><td>${parentEvaluation ? `${parentEvaluation.scored_examples || parentEvaluation.total}/${parentEvaluation.total} scored` : "still to run"}</td><td>${formatPercent(parentEvaluation?.strict_prompt_accuracy)}</td><td class="metric-neutral">reference</td></tr>${generationCandidates.map(item => { const enoughEvidence = item.evaluation?.status === "complete" || Number(item.evaluation?.scored_examples || 0) >= 10; const delta = enoughEvidence && item.evaluation?.strict_prompt_accuracy != null && parentEvaluation?.strict_prompt_accuracy != null ? item.evaluation.strict_prompt_accuracy - parentEvaluation.strict_prompt_accuracy : null; return `<tr ${item.evaluation ? `class="drilldown-row" data-a1-candidate="${escapeHtml(item.candidate.candidate_id)}" data-a1-stage="${escapeHtml(item.evaluation.stage)}"` : ""}><td><span class="run-id">${escapeHtml(item.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(item.candidate.operators?.join(", ") || "no mutation")}</small></td><td>${item.evaluation ? `${item.evaluation.scored_examples || 0}/${item.evaluation.total} scored${item.evaluation.status === "complete" ? "" : " · partial"}` : "still to run"}</td><td>${item.evaluation ? formatPercent(item.evaluation.strict_prompt_accuracy) : "still to run"}</td><td class="${delta > 0 ? "metric-positive" : delta < 0 ? "metric-negative" : "metric-neutral"}">${!item.evaluation ? "still to run" : delta == null ? "too early" : `${signedPercent(delta)}${item.evaluation.status === "complete" ? "" : " partial"}`}</td></tr>`; }).join("")}</tbody></table></div></div>` : ""}
+    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? "evolution is active" : runningThisRun ? "candidate complete · next candidate starting" : "latest candidate evaluation"}</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${activeRunLabel}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next candidate is still to run" : "evaluation complete"}</span></div></div>` : ""}
+    ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>improvement across generations</h2><span class="muted">completed results remain visible</span></div><div class="generation-history"><div class="history-row history-head"><span>stage</span><span>candidate</span><span>score</span><span>parent</span><span>change</span><span>decision</span></div><div class="history-row"><strong>baseline</strong><span class="run-id">a0-baseline</span><strong>${formatPercent(generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}</strong><span>reference</span><span>0.0 pp</span><span>starting prompt</span></div>${generationHistory.map(item => `<div class="history-row ${item.provisional ? "provisional" : ""}"><strong>generation ${item.generation}</strong><span class="run-id">${escapeHtml(item.candidateId)}</span><strong>${formatPercent(item.candidateScore)}</strong><span>${formatPercent(item.parentScore)}</span><span class="${item.delta > 0 ? "metric-positive" : item.delta < 0 ? "metric-negative" : "metric-neutral"}">${item.delta == null ? "too early" : signedPercent(item.delta)}${item.provisional ? " partial" : ""}</span><span>${escapeHtml(item.outcome)}</span></div>`).join("")}</div><p class="chart-note">A generation improves the system only when its confirmed candidate score is higher than its parent score. Partial results can change as more examples are scored.</p></div><div class="card"><div class="card-head"><h2>all confirmation runs</h2><span class="muted">every finalist, across every generation</span></div><table><thead><tr><th>generation</th><th>candidate</th><th>evidence</th><th>score</th><th>versus parent</th></tr></thead><tbody>${confirmationCandidates.map(record => `<tr class="drilldown-row" data-a1-candidate="${escapeHtml(record.candidate.candidate_id)}" data-a1-stage="${escapeHtml(record.item.stage)}"><td>${record.generation}</td><td><span class="run-id">${escapeHtml(record.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(record.candidate.rationale || "Prompt revision")}</small></td><td>${record.item.scored_examples || record.item.completed || 0}/${record.item.total || 0}${record.item.status === "complete" ? " final" : " partial"}</td><td>${formatPercent(record.item.strict_prompt_accuracy)}</td><td class="${record.delta > 0 ? "metric-positive" : record.delta < 0 ? "metric-negative" : "metric-neutral"}">${record.delta == null ? "pending" : signedPercent(record.delta)}${record.item.status === "complete" ? "" : " partial"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     ${completedDecisions.length ? `<div class="card section"><div class="card-head"><h2>did any generation improve the prompt?</h2><span class="muted">96 example confirmation results</span></div><div class="trajectory-bars">${completedDecisions.map(item => `<div class="trajectory-row"><span>generation ${item.generation}</span><div class="trajectory-track"><span class="${item.strict_prompt_delta >= 0 ? "positive" : "negative"}" style="width:${Math.min(Math.abs(item.strict_prompt_delta || 0) * 500, 100)}%"></span></div><strong class="${item.strict_prompt_delta > 0 ? "metric-positive" : item.strict_prompt_delta < 0 ? "metric-negative" : "metric-neutral"}">${signedPercent(item.strict_prompt_delta)}</strong><span>${item.accepted ? "new prompt adopted" : "parent kept"}</span></div>`).join("")}</div></div>` : ""}
     <div class="grid main-side">
       <div class="card">
