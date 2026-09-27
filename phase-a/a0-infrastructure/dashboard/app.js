@@ -474,6 +474,7 @@ function renderA1() {
   const activity = run?.active_evaluation || run?.latest_evaluation;
   const evaluationInProgress = run?.active_evaluation != null;
   const nextStage = run?.next_stage || "search";
+  const finalSplit = activity?.stage?.match(/^final-(evolution|validation|heldout_test)$/)?.[1] || null;
   const activeCandidate = activity ? candidates.find(candidate => candidate.candidate_id === activity.candidate_id) : null;
   // The evaluation stage identifies the search generation. The active parent
   // may have been created in an earlier generation, so its own generation
@@ -631,12 +632,16 @@ function renderA1() {
     ? activity.strict_prompt_accuracy - parentEvaluation.strict_prompt_accuracy
     : null;
   const activeComparison = measuringParent
-    ? `The system is measuring ${activeCandidate?.candidate_id || "the parent prompt"} on the same tasks that candidates must beat.`
+    ? finalSplit
+      ? `${activeCandidate?.candidate_id || "The parent prompt"} has completed ${activity?.scored_examples || 0} of ${activity?.total || 0} ${finalSplit.replaceAll("_", " ")} examples at ${formatPercent(activity?.strict_prompt_accuracy)} strict prompt accuracy.`
+      : `The system is measuring ${activeCandidate?.candidate_id || "the parent prompt"} on the same tasks that candidates must beat.`
     : activeDelta == null
       ? `${activity?.scored_examples || 0} of ${activity?.total || 0} examples have been scored, which is too early for a useful comparison.`
       : `${activeCandidate?.candidate_id || "This candidate"} currently passes ${formatPercent(activity?.strict_prompt_accuracy)} of scored prompts. The parent passes ${formatPercent(parentEvaluation?.strict_prompt_accuracy)}, so the candidate is ${Math.abs(activeDelta * 100).toFixed(1)} percentage points ${activeDelta > 0 ? "ahead" : "behind"}.`;
   const activeHeadline = measuringParent
-    ? `Measuring the generation ${activeGeneration} parent benchmark`
+    ? finalSplit
+      ? `Measuring the ${finalSplit.replaceAll("_", " ")} baseline`
+      : `Measuring the generation ${activeGeneration} parent benchmark`
     : activeDelta == null
       ? `Testing ${activeCandidate?.candidate_id || "the current candidate"}`
       : `${activeCandidate?.candidate_id || "The current candidate"} is ${Math.abs(activeDelta * 100).toFixed(1)} points ${activeDelta > 0 ? "ahead" : "behind"} so far`;
@@ -644,7 +649,17 @@ function renderA1() {
     ? "After all four candidates finish, the two highest scores move to a larger 96 example confirmation round. Nothing is inherited during screening."
     : stageLabel === "confirmation"
       ? "After both finalists finish, the best one is adopted only if it beats the parent on the same 96 examples. Otherwise the parent remains unchanged."
-      : "This stage measures the selected prompt without allowing another prompt change.";
+      : finalSplit === "validation"
+        ? "When validation finishes, its paired result is frozen and the heldout test becomes available. Validation cannot change the selected prompt."
+        : finalSplit === "heldout_test"
+          ? "When this heldout comparison finishes, A1 is complete. The heldout result cannot change the selected prompt."
+          : "This stage measures the selected prompt without allowing another prompt change.";
+  const pipeline = [
+    {label: "search", status: stateRecord.status === "complete" ? "complete" : runningThisRun && !finalSplit ? "running" : "waiting", progress: stateRecord.status === "complete" ? 100 : 0},
+    {label: "evolution", status: comparisons.evolution ? "complete" : finalSplit === "evolution" && evaluationInProgress ? "running" : "waiting", progress: comparisons.evolution ? 100 : finalSplit === "evolution" ? activity?.percent || 0 : 0},
+    {label: "validation", status: comparisons.validation ? "complete" : finalSplit === "validation" && evaluationInProgress ? "running" : "waiting", progress: comparisons.validation ? 100 : finalSplit === "validation" ? activity?.percent || 0 : 0},
+    {label: "heldout test", status: comparisons.heldout_test ? "complete" : finalSplit === "heldout_test" && evaluationInProgress ? "running" : "waiting", progress: comparisons.heldout_test ? 100 : finalSplit === "heldout_test" ? activity?.percent || 0 : 0},
+  ];
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
     <div class="card run-control-top">
@@ -655,6 +670,9 @@ function renderA1() {
       </div>
       <button class="button primary" id="a1-start" ${runningThisRun || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
     </div>
+    <div class="card stage-pipeline">
+      ${pipeline.map((item, index) => `<div class="pipeline-stage ${item.status}"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></div>`).join("")}
+    </div>
     <div class="card experiment-brief">
       <p class="eyebrow">what is happening now</p>
       <h2>${escapeHtml(activeHeadline)}</h2>
@@ -664,7 +682,7 @@ function renderA1() {
       <p><strong>What happens next:</strong> ${escapeHtml(nextExplanation)}</p>
       <div class="plain-conclusion"><strong>Current conclusion:</strong> ${escapeHtml(currentGenerationDecided ? findingDetail : "No improvement has been confirmed yet.")} <span>${runProposer === "deepseek" ? `DeepSeek ${escapeHtml(proposerStatus.deepseek?.model || "")} proposes the changes; IFEval scores them.` : "This control run uses a fixed mutation bank. DeepSeek will be used in the separately registered run."}</span></div>
     </div>
-    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? "evolution is active" : runningThisRun ? "candidate complete · next candidate starting" : "latest candidate evaluation"}</p><h2>generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${activeRunLabel}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : "The selected incumbent is being measured on the complete split."}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next candidate is still to run" : "evaluation complete"}</span></div></div>` : ""}
+    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? `${finalSplit ? finalSplit.replaceAll("_", " ") : "evolution"} is active` : runningThisRun ? "evaluation complete · next comparison starting" : "latest evaluation"}</p><h2>${finalSplit ? `${finalSplit.replaceAll("_", " ")} · ${measuringParent ? "baseline" : "selected prompt"}` : `generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${activeRunLabel}`}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : `This is a frozen ${finalSplit?.replaceAll("_", " ") || "final"} measurement. It cannot select or modify a prompt.`}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next comparison is still to run" : "evaluation complete"}</span></div></div>` : ""}
     ${activity ? `<div class="card section"><div class="card-head"><div><h2>live candidate checkpoints</h2><p class="muted">${escapeHtml(activity.candidate_id)} updates as new responses are verified</p></div><span class="live-indicator">${evaluationInProgress ? "● live" : "final"}</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}<p class="chart-note">Blue is the metric used to select a prompt. Green shows instruction-level accuracy. Orange is the format-tolerant upper bound. These lines can move until the candidate finishes.</p></div>` : ""}
     ${activity ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>improvement across generations</h2><span class="muted">solid points are final · orange is live</span></div>${generationProgressChart(generationHistory, generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}<div class="generation-history"><div class="history-row history-head"><span>stage</span><span>candidate</span><span>score</span><span>parent</span><span>change</span><span>decision</span></div><div class="history-row"><strong>baseline</strong><span class="run-id">a0-baseline</span><strong>${formatPercent(generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}</strong><span>reference</span><span>0.0 pp</span><span>starting prompt</span></div>${generationHistory.map(item => `<div class="history-row ${item.provisional ? "provisional" : ""}"><strong>generation ${item.generation}</strong><span class="run-id">${escapeHtml(item.candidateId)}</span><strong>${formatPercent(item.candidateScore)}</strong><span>${formatPercent(item.parentScore)}</span><span class="${item.delta > 0 ? "metric-positive" : item.delta < 0 ? "metric-negative" : "metric-neutral"}">${item.delta == null ? "too early" : signedPercent(item.delta)}${item.provisional ? " partial" : ""}</span><span>${escapeHtml(item.outcome)}</span></div>`).join("")}</div><p class="chart-note">A point above the dashed baseline is an improvement. A point below it is a regression. The live point can move until all 96 examples are scored.</p></div><div class="card"><div class="card-head"><h2>all confirmation runs</h2><span class="muted">every finalist, across every generation</span></div><table><thead><tr><th>generation</th><th>candidate</th><th>evidence</th><th>score</th><th>versus parent</th></tr></thead><tbody>${confirmationCandidates.map(record => `<tr class="drilldown-row" data-a1-candidate="${escapeHtml(record.candidate.candidate_id)}" data-a1-stage="${escapeHtml(record.item.stage)}"><td>${record.generation}</td><td><span class="run-id">${escapeHtml(record.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(record.candidate.rationale || "Prompt revision")}</small></td><td>${record.item.scored_examples || record.item.completed || 0}/${record.item.total || 0}${record.item.status === "complete" ? " final" : " partial"}</td><td>${formatPercent(record.item.strict_prompt_accuracy)}</td><td class="${record.delta > 0 ? "metric-positive" : record.delta < 0 ? "metric-negative" : "metric-neutral"}">${record.delta == null ? "pending" : signedPercent(record.delta)}${record.item.status === "complete" ? "" : " partial"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="card section">
