@@ -24,10 +24,21 @@ settings in [`deepseek_config.json`](deepseek_config.json).
 
 ## execution stages
 
-1. `search` runs three recursive generations on nested evolution panels and
-   evaluates the selected incumbent on the complete evolution split.
-2. `validation` evaluates the frozen winner without changing selection.
-3. `heldout_test` performs the final transfer measurement.
+The dashboard separates four scientific stages so each result can be inspected:
+
+1. `search` runs three recursive generations on nested evolution panels.
+2. `evolution` evaluates the frozen search winner on the complete evolution
+   split without changing selection.
+3. `validation` evaluates the frozen winner on unseen validation examples.
+4. `heldout_test` performs the final sealed transfer measurement.
+
+The runner performs the full evolution evaluation automatically at the end of
+the `search` command. Therefore, the runner has three resumable commands:
+`search`, `validation`, and `heldout_test`.
+
+The hierarchy, candidate flow, metrics, dashboard interpretation, and strategy
+comparison are explained in
+[`../../docs/a1_experiment_guide.md`](../../docs/a1_experiment_guide.md).
 
 The runner writes ignored evidence under `runs/a1/experiments/`. Checked-in
 source and documentation never contain generated benchmark responses.
@@ -44,7 +55,7 @@ estimates.
 Use the `a1 evolution` page in the local experiment console. The button follows
 the registered sequence and resumes the latest unfinished run:
 
-1. `start search`
+1. `start search`, which includes the final evolution evaluation
 2. `start validation`
 3. `start heldout test`
 
