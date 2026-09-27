@@ -85,6 +85,11 @@ h3 { font-size: 14px; }
 .ledger-heading p { margin: 5px 0 0; }
 .generation-history { display: grid; }
 .generation-chart { width: 100%; height: 270px; display: block; margin: 4px 0 10px; }
+.run-control-top { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
+.run-control-top .eyebrow, .run-control-top h2, .run-control-top p { margin-top: 0; }
+.run-control-top p { margin-bottom: 0; }
+.run-control-title { display: flex; align-items: center; gap: 12px; }
+.run-control-title h2 { margin-bottom: 4px; }
 .live-indicator { color: #16855b; font-size: 12px; font-weight: 700; animation: live-pulse 1.6s ease-in-out infinite; }
 @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .live-indicator { animation: none; } }
