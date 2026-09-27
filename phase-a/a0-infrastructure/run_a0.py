@@ -530,7 +530,14 @@ def main() -> None:
     # MLflow is the standard searchable ledger. The JSON and JSONL files stay
     # canonical because they are simple to audit and do not depend on a server.
     start_mlflow_run(run_dir, run_id, config, environment)
-    all_scores = {}
+    # Dashboard launches execute one split at a time. Rebuild the aggregate
+    # from every durable per-split metrics file before adding new results so a
+    # later validation or held-out launch cannot erase earlier summary scores.
+    all_scores = {
+        split_name: json.loads(metrics_path.read_text())
+        for split_name in ("evolution", "validation", "heldout_test")
+        if (metrics_path := run_dir / split_name / "metrics.json").exists()
+    }
     try:
         for split_name in args.splits:
             split_rows = splits[split_name]
