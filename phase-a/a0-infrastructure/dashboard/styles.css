@@ -80,6 +80,9 @@ h3 { font-size: 14px; }
 .status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; background: #ececf1; color: #5d5a65; }
 .status.running, .status.complete, .status.approved { background: var(--green-soft); color: #116b47; }
 .status.failed, .status.rejected { background: #fcebed; color: #a72e39; }
+.status.screened-out { background: #f4f0e7; color: #725d2d; }
+
+.ledger-heading p { margin: 5px 0 0; }
 .status.interrupted, .status.partial, .status.stopping { background: #fff4d9; color: #865506; }
 .progress { height: 8px; border-radius: 99px; background: #e9e8ee; overflow: hidden; }
 .progress > span { height: 100%; display: block; background: linear-gradient(90deg, #1456a0, #3478be); }
