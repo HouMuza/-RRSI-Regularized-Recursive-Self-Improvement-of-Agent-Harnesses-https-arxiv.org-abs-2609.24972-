@@ -124,31 +124,32 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .candidate-example-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(185px, 1fr)); gap: 8px; }
 .candidate-example { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); cursor: pointer; text-align: left; }
 .candidate-example:hover { border-color: var(--blue); background: #edf4ff; }
-.candidate-example.passed { border-left: 4px solid var(--green); }
-.candidate-example.failed { border-left: 4px solid #c54747; }
-.candidate-example.pending { border-left: 4px solid #9b99a2; }
-.insight-hero { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 24px; align-items: center; padding: 22px; border: 1px solid var(--line); border-left: 6px solid #7c7884; border-radius: 8px; background: var(--panel); }
-.insight-hero.positive { border-left-color: var(--green); background: #f5fcf8; }
-.insight-hero.provisional { border-left-color: #d07a16; background: #fffaf2; }
-.insight-hero h2 { margin: 4px 0 7px; font-size: 24px; }
-.insight-hero p:last-child { margin: 0; color: var(--muted); line-height: 1.5; }
-.evidence-level { padding-left: 20px; border-left: 1px solid var(--line); }
+.candidate-example.passed { background: #f3faf6; }
+.candidate-example.failed { background: #fff6f5; }
+.candidate-example.pending { background: var(--panel-3); }
+.experiment-brief { margin-bottom: 14px; }
+.brief-finding { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 24px; align-items: center; }
+.brief-finding h2 { margin: 4px 0 7px; font-size: 24px; }
+.brief-finding p:last-child { margin: 0; color: var(--muted); line-height: 1.5; }
+.evidence-level { padding-left: 20px; }
 .evidence-level span, .evidence-level small { display: block; color: var(--muted); }
 .evidence-level strong { display: block; margin: 5px 0; font-size: 19px; }
-.evolution-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.evolution-flow > div { position: relative; min-height: 110px; padding: 13px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--panel-3); }
-.evolution-flow span { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-bottom: 9px; border-radius: 50%; background: var(--blue); color: white; font-size: 12px; font-weight: 700; }
-.evolution-flow strong, .evolution-flow small { display: block; }
-.evolution-flow small { margin-top: 6px; color: var(--muted); line-height: 1.35; }
+.brief-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-top: 20px; padding: 18px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.brief-facts span, .brief-facts small { display: block; color: var(--muted); }
+.brief-facts span { margin-bottom: 5px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.brief-facts strong { display: block; margin-bottom: 4px; }
+.process-line { display: flex; flex-wrap: wrap; gap: 7px 12px; align-items: center; padding-top: 16px; font-size: 12px; color: var(--muted); }
+.process-line strong { margin-right: 8px; color: var(--text); }
+.process-line b { color: var(--blue); }
 .current-change { margin-top: 14px; padding: 13px 15px; border-radius: 7px; background: #edf4ff; line-height: 1.5; }
 .current-change span { display: block; margin-top: 3px; color: var(--muted); }
 .table-subline { display: block; margin-top: 4px; color: var(--muted); }
 .chart-note { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 
 @media (max-width: 1050px) {
-  .insight-hero { grid-template-columns: 1fr; }
+  .brief-finding { grid-template-columns: 1fr; }
   .evidence-level { padding: 14px 0 0; border-left: 0; border-top: 1px solid var(--line); }
-  .evolution-flow { grid-template-columns: 1fr 1fr; }
+  .brief-facts { grid-template-columns: 1fr 1fr; }
 }
 .artifact-hash { font: 10px ui-monospace, monospace; color: var(--faint); word-break: break-all; }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
