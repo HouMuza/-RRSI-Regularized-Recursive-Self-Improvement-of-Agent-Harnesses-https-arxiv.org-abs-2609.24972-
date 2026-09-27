@@ -11,11 +11,14 @@ import datetime
 import hashlib
 import json
 import os
+import ssl
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+import certifi
 
 
 SYSTEM_INSTRUCTION = """You are the proposal component in a controlled prompt evolution experiment.
@@ -67,7 +70,11 @@ def _post_json(url: str, api_key: str, payload: dict[str, Any], timeout: int) ->
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        # The python.org macOS runtime does not automatically inherit the
+        # system keychain certificate roots. Certifi provides the pinned CA
+        # bundle already installed with the experiment environment.
+        tls_context = ssl.create_default_context(cafile=certifi.where())
+        with urllib.request.urlopen(request, timeout=timeout, context=tls_context) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         # Preserve the provider status and a bounded response body for
