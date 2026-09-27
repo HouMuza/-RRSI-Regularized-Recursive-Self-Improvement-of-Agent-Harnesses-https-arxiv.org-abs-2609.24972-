@@ -24,6 +24,43 @@ const stopButton = document.getElementById("stop-button");
 const refreshButton = document.getElementById("refresh-button");
 const dialog = document.getElementById("example-dialog");
 const experimentSelect = document.getElementById("experiment-select");
+const stageHelpDialog = document.getElementById("stage-help-dialog");
+const stageHelpContent = document.getElementById("stage-help-content");
+
+const A1_STAGE_HELP = {
+  search: {
+    title: "Search: create and select prompt changes",
+    purpose: "Search is the only stage allowed to change the system prompt. It asks whether a prompt-only mutation can make the frozen Qwen model follow more instructions.",
+    process: "Each generation creates four candidate prompts. All four run on the same 32-example screen. The two highest strict prompt scores advance to a paired 96-example confirmation round. A candidate becomes the next parent only when it beats the current parent on that confirmation panel.",
+    data: "Search uses only the evolution split. It cannot read validation or heldout results. Model weights, the dataset, generation settings, and the IFEval verifier remain frozen.",
+    metric: "Strict prompt accuracy is the selection metric. An example passes only when every instruction in that prompt passes. A positive confirmation difference is required for adoption.",
+    visual: "The generation graph shows whether the best confirmed candidate moved above or below its parent. Candidate tables preserve every attempted mutation, including ideas stopped after screening.",
+  },
+  evolution: {
+    title: "Evolution evaluation: measure the frozen winner on development data",
+    purpose: "This stage measures the prompt selected by search across the complete evolution split and compares it with the approved A0 baseline.",
+    process: "The winner and baseline are evaluated under the same model, settings, examples, and deterministic verifier. No prompt can be selected or modified here.",
+    data: "The evolution split was available to search, so this result describes performance on development data. It does not establish generalization by itself.",
+    metric: "The graph compares strict prompt accuracy for the baseline and selected prompt. The reported change is selected prompt accuracy minus baseline accuracy.",
+    visual: "Higher selected-prompt bars indicate improvement. Equal bars indicate no change. If search retained the baseline, both bars represent the same prompt and a zero difference is expected.",
+  },
+  validation: {
+    title: "Validation: test generalization without changing the prompt",
+    purpose: "Validation asks whether the frozen search result transfers to examples that were not available for candidate selection.",
+    process: "The baseline and selected prompt run on the validation split with identical model settings and the official verifier. The result is recorded, but it cannot change the selected prompt.",
+    data: "Validation examples are excluded from search and confirmation decisions. This separation reduces the risk of mistaking evolution-set overfitting for a real improvement.",
+    metric: "The primary result is the paired strict prompt accuracy difference. Positive means the selected prompt passed more complete examples, negative means it passed fewer, and zero means no measured difference.",
+    visual: "The live chart moves as checkpoints are scored. The final bar chart compares baseline and selected prompt after every validation example is verified.",
+  },
+  heldout_test: {
+    title: "Heldout test: final sealed evaluation",
+    purpose: "The heldout test provides the final estimate of how the frozen result performs on untouched examples.",
+    process: "It runs only after search, evolution evaluation, and validation are complete. Neither the prompt nor the acceptance decision may change after seeing this result.",
+    data: "Heldout examples remain sealed from development views and selection logic until this stage begins. This protects the final result from iterative tuning.",
+    metric: "The final report compares paired strict prompt accuracy for the baseline and selected prompt, with the difference reported in percentage points.",
+    visual: "The final bars are the experiment's strongest generalization evidence. Equal bars mean no measured improvement. A positive selected-prompt difference supports transfer, while a negative difference indicates regression.",
+  },
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -75,6 +112,13 @@ function showBanner(message, kind = "success") {
   banner.textContent = message;
   banner.className = `banner ${kind}`;
   setTimeout(() => { banner.className = "banner hidden"; }, 6500);
+}
+
+function openStageHelp(stage) {
+  const help = A1_STAGE_HELP[stage];
+  if (!help) return;
+  stageHelpContent.innerHTML = `<p class="eyebrow">A1 stage guide</p><h2>${escapeHtml(help.title)}</h2><section><h3>What this stage asks</h3><p>${escapeHtml(help.purpose)}</p></section><section><h3>How it works</h3><p>${escapeHtml(help.process)}</p></section><section><h3>What data it can use</h3><p>${escapeHtml(help.data)}</p></section><section><h3>How success is measured</h3><p>${escapeHtml(help.metric)}</p></section><section><h3>How to read the visuals</h3><p>${escapeHtml(help.visual)}</p></section>`;
+  stageHelpDialog.showModal();
 }
 
 async function api(path, options = {}) {
@@ -699,7 +743,7 @@ function renderA1() {
       <button class="button primary" id="a1-start" ${runningThisRun || (run?.complete && !proposerStatus.deepseek?.configured) ? "disabled" : ""}>${escapeHtml(actionLabel)}</button>
     </div>
     <div class="card stage-pipeline" aria-label="Select A1 stage">
-      ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<button class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}" data-a1-stage="${value}"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button>`; }).join("")}
+      ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
     </div>
     ${!showSearch ? selectedComparison ? `<div class="card evaluation-insight"><div><p class="eyebrow">${escapeHtml(selectedStageLabel)} result</p><h2>${signedPercent(selectedComparison.strict_prompt_delta)} change from baseline</h2><p>${retainedBaseline ? `Search retained the original prompt, so ${escapeHtml(selectedStageLabel)} measured the same prompt on both sides. Both scored ${formatPercent(selectedComparison.baseline_strict_prompt_accuracy)}. This confirms reproducibility and cannot demonstrate improvement.` : `The selected prompt scored ${formatPercent(selectedComparison.candidate_strict_prompt_accuracy)} versus ${formatPercent(selectedComparison.baseline_strict_prompt_accuracy)} for the baseline.`}</p><strong>${selectedStage === "heldout_test" ? "This is the final A1 result." : selectedStage === "validation" ? "Validation is complete. The heldout test is next." : "Evolution evaluation is complete."}</strong></div>${splitComparisonChart({[selectedStage]: selectedComparison})}</div>` : `<div class="card stage-empty"><p class="eyebrow">${escapeHtml(selectedStageLabel)}</p><h2>${finalSplit === selectedStage && evaluationInProgress ? "Evaluation is running" : "This stage has not run yet"}</h2><p>${selectedStage === "heldout_test" ? "Complete validation before starting the heldout test." : "Complete the preceding stage before this result becomes available."}</p></div>` : ""}
     <div class="card experiment-brief ${showActiveEvaluation ? "" : "hidden"}">
@@ -754,6 +798,9 @@ function renderA1() {
     state.a1Stage = button.dataset.a1Stage;
     localStorage.setItem("rrsi-a1-stage", state.a1Stage);
     renderA1();
+  }));
+  document.querySelectorAll("[data-stage-help]").forEach(button => button.addEventListener("click", () => {
+    openStageHelp(button.dataset.stageHelp);
   }));
   document.querySelectorAll("[data-a1-candidate]").forEach(row => row.addEventListener("click", () => {
     openA1Candidate(run.run_id, row.dataset.a1Candidate, row.dataset.a1Stage);
@@ -832,6 +879,7 @@ experimentSelect.addEventListener("change", async event => {
 });
 window.addEventListener("hashchange", render);
 dialog.querySelector(".dialog-close").addEventListener("click", () => dialog.close());
+stageHelpDialog.querySelector(".dialog-close").addEventListener("click", () => stageHelpDialog.close());
 setInterval(async () => {
   if (["overview", "run", "a1", "system"].includes(state.view)) await refresh();
 }, 5000);
