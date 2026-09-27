@@ -140,7 +140,7 @@ function metricChart(history, metricNames) {
   const points = history || [];
   if (!points.length) return `<div class="chart-empty">No metric history has been recorded yet.</div>`;
   const width = 900, height = 245, left = 46, right = 12, top = 16, bottom = 27;
-  const colors = ["#54d59a", "#72a7ff", "#f2bf63", "#b99cff"];
+  const colors = ["#632ca6", "#2f6fda", "#d07a16", "#16855b"];
   const x = index => left + index / Math.max(points.length - 1, 1) * (width - left - right);
   const y = value => top + (1 - Number(value || 0)) * (height - top - bottom);
   const lines = metricNames.map((metric, metricIndex) => {
@@ -148,10 +148,10 @@ function metricChart(history, metricNames) {
     return `<path d="${path}" fill="none" stroke="${colors[metricIndex]}" stroke-width="2.5"/><text x="${left + metricIndex * 190}" y="240" fill="${colors[metricIndex]}" font-size="11">${escapeHtml(metric.replaceAll("_", " "))}</text>`;
   }).join("");
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Metric history">
-    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#334151"/>
-    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#334151"/>
-    <line x1="${left}" y1="${y(.5)}" x2="${width-right}" y2="${y(.5)}" stroke="#202a36" stroke-dasharray="4 5"/>
-    <text x="8" y="${top+4}" fill="#738296" font-size="10">100%</text><text x="17" y="${height-bottom}" fill="#738296" font-size="10">0%</text>
+    <line x1="${left}" y1="${top}" x2="${left}" y2="${height-bottom}" stroke="#d8d6df"/>
+    <line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="#d8d6df"/>
+    <line x1="${left}" y1="${y(.5)}" x2="${width-right}" y2="${y(.5)}" stroke="#e9e7ed" stroke-dasharray="4 5"/>
+    <text x="8" y="${top+4}" fill="#7c7884" font-size="10">100%</text><text x="17" y="${height-bottom}" fill="#7c7884" font-size="10">0%</text>
     ${lines}
   </svg>`;
 }
