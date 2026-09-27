@@ -68,6 +68,33 @@ MUTATION_OPERATORS = [
 ]
 
 
+def load_local_deepseek_key() -> None:
+    """Load DEEPSEEK_API_KEY from the ignored root .env when needed.
+
+    Direct CLI runs do not necessarily inherit the dashboard environment.
+    Supporting the same narrow local file in both entry points keeps secret
+    handling consistent without adding a dependency or executing shell text.
+    """
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return
+    env_path = ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() != "DEEPSEEK_API_KEY":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if value:
+            os.environ["DEEPSEEK_API_KEY"] = value
+        return
+
+
 def utc_now() -> str:
     """Return an explicit timestamp for every durable ledger event."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -570,6 +597,7 @@ def run_transfer_stage(run_dir: Path, stage: str, config: dict[str, Any], rows: 
 
 def main() -> None:
     """Validate frozen inputs and execute one resumable A1 protocol stage."""
+    load_local_deepseek_key()
     signal.signal(signal.SIGTERM, a0.stop_signal_handler)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"a1-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}")

@@ -33,6 +33,33 @@ ACTIVE_PROCESS: subprocess.Popen[str] | None = None
 ACTIVE_LOG: Any = None
 
 
+def load_local_deepseek_key() -> None:
+    """Load the one supported secret from the ignored repository .env file.
+
+    The parser is deliberately narrow. It does not execute shell syntax,
+    interpolate variables, or copy arbitrary local settings into the process.
+    An already exported environment variable always takes precedence.
+    """
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return
+    env_path = ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        if name.strip() != "DEEPSEEK_API_KEY":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if value:
+            os.environ["DEEPSEEK_API_KEY"] = value
+        return
+
+
 def utc_now() -> str:
     """Return an explicit UTC timestamp for process and decision records."""
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -584,6 +611,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     """Start the threaded localhost experiment console."""
+    load_local_deepseek_key()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)

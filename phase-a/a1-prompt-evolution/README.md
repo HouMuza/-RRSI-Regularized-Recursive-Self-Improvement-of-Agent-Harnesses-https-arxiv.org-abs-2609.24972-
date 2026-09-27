@@ -59,18 +59,23 @@ The equivalent commands are:
   --run-id a1-YYYYMMDD-HHMMSS --stage heldout_test
 ```
 
-For a new DeepSeek proposer run, set the key only in the local process
-environment and give the run a new id:
+For a new DeepSeek proposer run, store the key in the ignored repository root
+`.env` file:
+
+```text
+DEEPSEEK_API_KEY=your-local-key
+```
+
+Then give the run a new id:
 
 ```bash
-export DEEPSEEK_API_KEY="your-local-key"
 .venv/bin/python phase-a/a1-prompt-evolution/run_a1.py \
   --run-id a1-YYYYMMDD-HHMMSS --stage search --proposer deepseek
 ```
 
-The dashboard must be started from a shell that has the same environment
-variable if its run button will launch DeepSeek. The dashboard reports whether
-the key is configured, but never returns or displays its value.
+The dashboard and direct runner load this one variable automatically. An
+already exported `DEEPSEEK_API_KEY` takes precedence. The dashboard reports
+whether the key is configured, but never returns or displays its value.
 
 Do not create a new run id between stages. Search can be interrupted and
 resumed because complete response records, candidate definitions, generation
