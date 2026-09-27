@@ -165,6 +165,7 @@ def a1_snapshot() -> dict[str, Any]:
             for evaluation_dir in sorted(item for item in evaluations_root.glob("*") if item.is_dir()) if evaluations_root.exists() else []:
                 metrics = store.read_json(evaluation_dir / "metrics.json", {})
                 progress = store.read_json(evaluation_dir / "progress.json", {})
+                progress_history = store.read_jsonl(evaluation_dir / "progress.jsonl")
                 responses = store.read_jsonl(evaluation_dir / "raw_responses.jsonl")
                 official_results = store.read_jsonl(evaluation_dir / "eval_results_strict.jsonl")
                 completed = len(responses) or len(official_results) or int(progress.get("completed") or 0)
@@ -180,6 +181,7 @@ def a1_snapshot() -> dict[str, Any]:
                     "examples_per_second": progress.get("examples_per_second"),
                     "eta_seconds": (max(total - completed, 0) / progress["examples_per_second"]) if progress.get("examples_per_second") else None,
                     "updated_at": progress.get("updated_at"),
+                    "progress_history": progress_history,
                 })
             candidate["evaluations"] = evaluation_summaries
             candidates.append(candidate)

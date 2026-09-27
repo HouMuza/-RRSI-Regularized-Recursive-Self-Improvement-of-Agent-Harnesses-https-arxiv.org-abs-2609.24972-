@@ -124,6 +124,12 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .a1-live-explanation { color: var(--muted); margin: -3px 0 13px; }
 .a1-progress-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin-top: 10px; color: var(--muted); font-size: 12px; }
 .a1-progress-meta strong { color: var(--text); }
+.trajectory-bars { display: grid; gap: 10px; }
+.trajectory-row { display: grid; grid-template-columns: 90px minmax(140px, 1fr) 70px 70px; gap: 12px; align-items: center; font-size: 12px; }
+.trajectory-track { height: 9px; background: #ececf1; border-radius: 99px; overflow: hidden; }
+.trajectory-track span { display: block; height: 100%; border-radius: inherit; }
+.trajectory-track .positive { background: var(--green); }
+.trajectory-track .negative { background: var(--red); }
 
 @media (max-width: 1050px) {
   .grid.kpis { grid-template-columns: repeat(2, 1fr); }
