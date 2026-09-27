@@ -334,6 +334,10 @@ def run_search(run_dir: Path, config: dict[str, Any], rows: dict[str, list[dict[
         "started_at": utc_now(),
     })
     state["status"] = "running"
+    # A resumed search retains its durable candidates and responses while the
+    # prior failure message is cleared from the current lifecycle display.
+    for stale_key in ("error", "error_type", "failed_at"):
+        state.pop(stale_key, None)
     write_json(state_path, state)
 
     evolution = rows["evolution"]

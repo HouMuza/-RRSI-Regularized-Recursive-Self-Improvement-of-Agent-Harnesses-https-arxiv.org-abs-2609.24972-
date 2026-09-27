@@ -118,6 +118,9 @@ dialog::backdrop { background: rgba(37,32,43,.35); }
 .artifact-hash { font: 10px ui-monospace, monospace; color: var(--faint); word-break: break-all; }
 .loading { color: var(--muted); padding: 60px 0; text-align: center; }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
+.a1-live { margin-bottom: 14px; border-top: 3px solid var(--purple); }
+.a1-progress-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin-top: 10px; color: var(--muted); font-size: 12px; }
+.a1-progress-meta strong { color: var(--text); }
 
 @media (max-width: 1050px) {
   .grid.kpis { grid-template-columns: repeat(2, 1fr); }

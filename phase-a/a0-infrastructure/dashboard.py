@@ -161,12 +161,24 @@ def a1_snapshot() -> dict[str, Any]:
         for path in sorted((run_dir / "candidates").glob("*/candidate.json")) if (run_dir / "candidates").exists() else []:
             candidate = store.read_json(path, {})
             evaluation_summaries = []
-            for metrics_path in sorted(path.parent.glob("evaluations/*/metrics.json")):
-                metrics = store.read_json(metrics_path, {})
+            evaluations_root = path.parent / "evaluations"
+            for evaluation_dir in sorted(item for item in evaluations_root.glob("*") if item.is_dir()) if evaluations_root.exists() else []:
+                metrics = store.read_json(evaluation_dir / "metrics.json", {})
+                progress = store.read_json(evaluation_dir / "progress.json", {})
+                responses = store.read_jsonl(evaluation_dir / "raw_responses.jsonl")
+                completed = len(responses) or int(progress.get("completed") or 0)
+                total = int(progress.get("total") or completed)
                 evaluation_summaries.append({
-                    "stage": metrics_path.parent.name,
-                    "strict_prompt_accuracy": metrics.get("strict", {}).get("prompt_accuracy"),
-                    "strict_instruction_accuracy": metrics.get("strict", {}).get("instruction_accuracy"),
+                    "stage": evaluation_dir.name,
+                    "status": "complete" if metrics else "running" if completed else "queued",
+                    "completed": completed,
+                    "total": total,
+                    "percent": 100 * completed / total if total else 0,
+                    "strict_prompt_accuracy": metrics.get("strict", {}).get("prompt_accuracy", progress.get("strict_prompt_accuracy")),
+                    "strict_instruction_accuracy": metrics.get("strict", {}).get("instruction_accuracy", progress.get("strict_instruction_accuracy")),
+                    "examples_per_second": progress.get("examples_per_second"),
+                    "eta_seconds": (max(total - completed, 0) / progress["examples_per_second"]) if progress.get("examples_per_second") else None,
+                    "updated_at": progress.get("updated_at"),
                 })
             candidate["evaluations"] = evaluation_summaries
             candidates.append(candidate)
@@ -179,6 +191,16 @@ def a1_snapshot() -> dict[str, Any]:
             next_stage = "validation" if "validation" not in comparisons else "heldout_test" if "heldout_test" not in comparisons else None
         else:
             next_stage = "search"
+        active_evaluations = sorted(
+            (
+                {"candidate_id": candidate.get("candidate_id"), **evaluation}
+                for candidate in candidates
+                for evaluation in candidate.get("evaluations", [])
+                if evaluation.get("status") == "running"
+            ),
+            key=lambda item: item.get("updated_at") or "",
+            reverse=True,
+        )
         runs.append({
             "run_id": run_dir.name,
             "state": state,
@@ -187,6 +209,7 @@ def a1_snapshot() -> dict[str, Any]:
             "comparisons": comparisons,
             "next_stage": next_stage,
             "complete": next_stage is None,
+            "active_evaluation": active_evaluations[0] if active_evaluations else None,
         })
     return {"config": config, "runs": runs, "control": reconcile_process()}
 

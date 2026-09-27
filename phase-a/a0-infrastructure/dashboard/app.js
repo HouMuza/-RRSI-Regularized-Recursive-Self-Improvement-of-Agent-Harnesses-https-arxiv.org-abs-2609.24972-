@@ -361,10 +361,11 @@ function renderA1() {
   const stateRecord = run?.state || {};
   const candidates = run?.candidates || [];
   const comparisons = run?.comparisons || {};
+  const activity = run?.active_evaluation;
   const nextStage = run?.next_stage || "search";
   const actionLabel = runningThisRun
     ? `${control.stage} running`
-    : run?.complete ? "start new a1 run" : `${stateRecord.status === "running" ? "resume" : "start"} ${nextStage}`;
+    : run?.complete ? "start new a1 run" : `${run ? "resume" : "start"} ${nextStage}`;
   const comparisonCards = ["evolution", "validation", "heldout_test"].map(name => {
     const item = comparisons[name];
     return item
@@ -372,6 +373,8 @@ function renderA1() {
       : kpi(name.replaceAll("_", " "), "pending", "paired against the approved a0 baseline");
   }).join("");
   content.innerHTML = `
+    ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
+    ${activity ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">current evaluation</p><h2>${escapeHtml(activity.candidate_id)} / ${escapeHtml(activity.stage)}</h2></div>${statusBadge(runningThisRun ? "running" : activity.status)}</div><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} examples</strong><span>${(activity.percent || 0).toFixed(1)}%</span><span>strict ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>ETA ${formatDuration(activity.eta_seconds)}</span></div></div>` : ""}
     <div class="grid main-side">
       <div class="card">
         <div class="card-head"><div><p class="eyebrow">prompt-only recursive improvement</p><h2>a1 evolution protocol</h2></div>${statusBadge(run?.complete ? "complete" : runningThisRun ? "running" : run ? stateRecord.status || "ready" : "ready")}</div>
@@ -397,7 +400,7 @@ function renderA1() {
       <div class="card flush">
         <div class="card-head" style="padding:16px;margin:0"><h2>candidate ledger</h2><span class="muted">${candidates.length} candidates recorded</span></div>
         <table><thead><tr><th>candidate</th><th>parent</th><th>generation</th><th>status</th><th>prompt words</th><th>evaluations</th></tr></thead><tbody>
-          ${candidates.length ? candidates.map(candidate => `<tr><td class="run-id">${escapeHtml(candidate.candidate_id)}</td><td class="run-id">${escapeHtml(candidate.parent_id || "root")}</td><td>${escapeHtml(candidate.generation)}</td><td>${statusBadge(candidate.status)}</td><td>${escapeHtml(candidate.prompt_words || 0)}</td><td>${candidate.evaluations?.length || 0}</td></tr>`).join("") : `<tr><td colspan="6" class="empty">Candidates appear when search starts.</td></tr>`}
+          ${candidates.length ? candidates.map(candidate => { const latest = candidate.evaluations?.at(-1); return `<tr><td class="run-id">${escapeHtml(candidate.candidate_id)}</td><td class="run-id">${escapeHtml(candidate.parent_id || "root")}</td><td>${escapeHtml(candidate.generation)}</td><td>${statusBadge(candidate.status)}</td><td>${escapeHtml(candidate.prompt_words || 0)}</td><td>${latest ? `${escapeHtml(latest.stage)} · ${latest.completed || 0}/${latest.total || 0}` : "queued"}</td></tr>`; }).join("") : `<tr><td colspan="6" class="empty">Candidates appear when search starts.</td></tr>`}
         </tbody></table>
       </div>
       <div class="card">
