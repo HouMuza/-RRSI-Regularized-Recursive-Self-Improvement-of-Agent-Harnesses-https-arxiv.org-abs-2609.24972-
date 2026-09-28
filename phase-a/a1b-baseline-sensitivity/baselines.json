@@ -1,0 +1,39 @@
+{
+  "conditions": [
+    {
+      "id": "empty",
+      "label": "empty prompt",
+      "prompt": "",
+      "quality_order": 0,
+      "purpose": "Measure improvement headroom when the model receives no system-level instruction."
+    },
+    {
+      "id": "ordinary",
+      "label": "ordinary human-style prompt",
+      "prompt": "You are a helpful assistant. Give clear and useful answers to the user.",
+      "quality_order": 1,
+      "purpose": "Represent a plausible general assistant instruction without explicit constraint handling."
+    },
+    {
+      "id": "conflicting",
+      "label": "conflicting helpfulness prompt",
+      "prompt": "You are a helpful assistant. Always provide detailed explanations, begin with a friendly introduction, and finish with a helpful conclusion.",
+      "quality_order": 2,
+      "purpose": "Test whether search can remove helpfulness instructions that conflict with literal task constraints."
+    },
+    {
+      "id": "expert",
+      "label": "expert concise prompt",
+      "prompt": "Follow the user's instructions exactly. Prioritize every explicit content, length, formatting, and exclusion constraint over optional elaboration.",
+      "quality_order": 3,
+      "purpose": "Represent deliberate human prompt engineering with direct constraint prioritization."
+    },
+    {
+      "id": "current",
+      "label": "current a0 prompt",
+      "prompt": "You are a helpful assistant. Follow the user's instructions carefully and satisfy every stated constraint.",
+      "quality_order": 4,
+      "purpose": "Retain the completed A1 starting condition as the strongest existing reference."
+    }
+  ]
+}

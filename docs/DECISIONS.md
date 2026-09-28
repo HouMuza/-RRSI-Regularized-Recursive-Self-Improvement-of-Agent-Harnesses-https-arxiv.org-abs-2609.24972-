@@ -3,6 +3,23 @@
 Record research and implementation decisions that affect comparability or
 future interpretation. Add new entries at the top.
 
+## 2026-09-28: revise a1 into baseline sensitivity before a2
+
+- **Decision:** Record A1 as a completed negative result and do not advance to
+  A2 yet. Run A1b with five frozen starting prompt conditions under matched
+  deterministic and DeepSeek proposal strategies.
+- **Reason:** Both A1 strategies retained the concise A0 prompt. The result may
+  reflect limited improvement headroom rather than a general failure of prompt
+  evolution.
+- **Constraint:** Existing A1 runs remain immutable. Each A1b run records its
+  baseline condition and proposer. Custom baselines generate their own paired
+  responses. Validation and heldout evidence remain unavailable to search.
+- **Evidence:** See
+  [`phase-a/a1-prompt-evolution/results.md`](../phase-a/a1-prompt-evolution/results.md)
+  and
+  [`phase-a/a1b-baseline-sensitivity/preregistration.md`](../phase-a/a1b-baseline-sensitivity/preregistration.md).
+- **Decision owner:** Project owner.
+
 ## 2026-09-27: separate the deepseek improver from deterministic acceptance
 
 - **Decision:** Preserve the active deterministic mutation run as a control.

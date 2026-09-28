@@ -159,7 +159,7 @@ def propose_candidates(
             chosen.append(operators[(index + generation + 1) % len(operators)])
         additions = " ".join(item["instruction"] for item in chosen)
         additions = " ".join(additions.split()[:maximum_added_words])
-        child_prompt = parent_prompt.rstrip() + " " + additions
+        child_prompt = " ".join(part for part in (parent_prompt.strip(), additions) if part)
         candidate = {
             "candidate_id": candidate_id,
             "parent_id": parent_id,
@@ -359,7 +359,7 @@ def evaluate_candidate(
         return read_json(metrics_path)
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    if candidate["candidate_id"] == "a0-baseline":
+    if candidate.get("reuse_a0_responses", candidate["candidate_id"] == "a0-baseline"):
         records = baseline_records(baseline_run_id, split_name, rows)
     else:
         candidate_config = copy.deepcopy(a0_config)
@@ -434,13 +434,14 @@ def start_mlflow(run_dir: Path, run_id: str, config: dict[str, Any], proposer: s
     """Create or resume the local A1 tracking entry."""
     tracking_uri = f"sqlite:///{(ROOT / 'runs/a0/mlflow.db').as_posix()}"
     mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("rrsi-a1")
+    experiment_id = config["experiment"].get("id", "a1")
+    mlflow.set_experiment(f"rrsi-{experiment_id}")
     ledger_path = run_dir / "mlflow.json"
     ledger = read_json(ledger_path, {})
     if ledger.get("run_id"):
         mlflow.start_run(run_id=ledger["run_id"])
         return
-    active = mlflow.start_run(run_name=run_id, tags={"rrsi.phase": "a1", "rrsi.local_run_id": run_id})
+    active = mlflow.start_run(run_name=run_id, tags={"rrsi.phase": experiment_id, "rrsi.local_run_id": run_id})
     mlflow.log_params({
         "baseline_run_id": config["experiment"]["baseline_run_id"],
         "generations": config["search"]["generations"],
@@ -449,6 +450,7 @@ def start_mlflow(run_dir: Path, run_id: str, config: dict[str, Any], proposer: s
         "confirmation_examples": config["search"]["confirmation_examples"],
         "mutable_component": "system_prompt",
         "proposer": proposer,
+        "baseline_condition_id": config["experiment"].get("starting_prompt_id", "current"),
     })
     write_json(ledger_path, {"run_id": active.info.run_id, "experiment_id": active.info.experiment_id, "tracking_uri": tracking_uri})
 
@@ -465,15 +467,20 @@ def run_search(
     search = config["search"]
     baseline_run_id = config["experiment"]["baseline_run_id"]
     evaluator_dir = ROOT / "runs/a0/source/google-research/instruction_following_eval"
+    starting_prompt = config["experiment"].get("starting_prompt", a0_config["model"]["system_prompt"])
+    baseline_id = config["experiment"].get("starting_prompt_id", "a0-baseline")
     baseline = {
-        "candidate_id": "a0-baseline",
+        "candidate_id": baseline_id,
         "parent_id": None,
         "generation": 0,
-        "prompt": a0_config["model"]["system_prompt"],
-        "prompt_words": len(a0_config["model"]["system_prompt"].split()),
+        "prompt": starting_prompt,
+        "prompt_words": len(starting_prompt.split()),
+        # Only the unchanged current condition can reuse responses generated
+        # by A0. Every custom A1b prompt generates its own paired baseline.
+        "reuse_a0_responses": starting_prompt == a0_config["model"]["system_prompt"],
         "status": "baseline",
     }
-    write_json(run_dir / "candidates/a0-baseline/candidate.json", baseline)
+    write_json(run_dir / "candidates" / baseline_id / "candidate.json", baseline)
     state_path = run_dir / "search_state.json"
     state = read_json(state_path, {
         "status": "running",
@@ -560,7 +567,7 @@ def run_search(
     baseline_metrics = evaluate_candidate(run_dir, baseline, evolution, "final-evolution", a0_config, evaluator_dir, baseline_run_id, config["locked"]["device"])
     record_comparison(
         run_dir, "evolution",
-        run_dir / "candidates/a0-baseline/evaluations/final-evolution",
+        run_dir / "candidates" / baseline_id / "evaluations/final-evolution",
         run_dir / "candidates" / winner["candidate_id"] / "evaluations/final-evolution",
         baseline_metrics, final_metrics, config["experiment"]["seed"],
     )
@@ -577,7 +584,14 @@ def run_transfer_stage(run_dir: Path, stage: str, config: dict[str, Any], rows: 
         raise RuntimeError("Complete validation before held-out evaluation")
     evaluator_dir = ROOT / "runs/a0/source/google-research/instruction_following_eval"
     baseline_run_id = config["experiment"]["baseline_run_id"]
-    baseline = read_json(run_dir / "candidates/a0-baseline/candidate.json")
+    baseline_candidates = [
+        read_json(path, {})
+        for path in (run_dir / "candidates").glob("*/candidate.json")
+        if read_json(path, {}).get("generation") == 0
+    ]
+    if len(baseline_candidates) != 1:
+        raise RuntimeError("The run must contain exactly one generation-zero baseline")
+    baseline = baseline_candidates[0]
     winner = read_json(run_dir / "candidates" / state["winner_id"] / "candidate.json")
     panel = rows[stage]
     device = config["locked"]["device"]
@@ -585,7 +599,7 @@ def run_transfer_stage(run_dir: Path, stage: str, config: dict[str, Any], rows: 
     winner_metrics = evaluate_candidate(run_dir, winner, panel, f"final-{stage}", a0_config, evaluator_dir, baseline_run_id, device, stage)
     comparison = record_comparison(
         run_dir, stage,
-        run_dir / "candidates/a0-baseline/evaluations" / f"final-{stage}",
+        run_dir / "candidates" / baseline["candidate_id"] / "evaluations" / f"final-{stage}",
         run_dir / "candidates" / winner["candidate_id"] / "evaluations" / f"final-{stage}",
         baseline_metrics, winner_metrics, config["experiment"]["seed"],
     )
@@ -600,11 +614,32 @@ def main() -> None:
     load_local_deepseek_key()
     signal.signal(signal.SIGTERM, a0.stop_signal_handler)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-id", default=f"a1-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    parser.add_argument("--run-id")
     parser.add_argument("--stage", choices=("search", "validation", "heldout_test"), default="search")
     parser.add_argument("--proposer", choices=("deterministic", "deepseek"))
+    parser.add_argument("--experiment", choices=("a1", "a1b"), default="a1")
+    parser.add_argument("--baseline-id", help="Required for a new A1b run and immutable after creation")
     args = parser.parse_args()
-    config = read_json(A1_CONFIG)
+    global RUNS_ROOT
+    if args.experiment == "a1b":
+        experiment_root = ROOT / "phase-a/a1b-baseline-sensitivity"
+        experiment_config_path = experiment_root / "config.json"
+        config = read_json(experiment_config_path)
+        baseline_registry = read_json(experiment_root / "baselines.json", {}).get("conditions", [])
+        baseline_by_id = {item["id"]: item for item in baseline_registry}
+        if args.baseline_id not in baseline_by_id:
+            raise RuntimeError("A new A1b run requires a registered --baseline-id")
+        baseline_condition = baseline_by_id[args.baseline_id]
+        config["experiment"]["starting_prompt_id"] = baseline_condition["id"]
+        config["experiment"]["starting_prompt"] = baseline_condition["prompt"]
+        config["experiment"]["starting_prompt_label"] = baseline_condition["label"]
+        RUNS_ROOT = ROOT / "runs/a1b"
+    else:
+        experiment_config_path = A1_CONFIG
+        config = read_json(experiment_config_path)
+        config["experiment"].setdefault("starting_prompt_id", "a0-baseline")
+        config["experiment"].setdefault("starting_prompt", read_json(A0_CONFIG)["model"]["system_prompt"])
+    args.run_id = args.run_id or f"{args.experiment}-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     provider_config = read_json(DEEPSEEK_CONFIG, {})
     a0_config = read_json(A0_CONFIG)
     gate = read_json(ROOT / "runs/a0/experiments" / config["experiment"]["baseline_run_id"] / "gate_decision.json", {})
@@ -628,18 +663,29 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("NLTK_DATA", str(ROOT / "runs/a0/nltk_data"))
     existing_manifest = read_json(run_dir / "manifest.json", {})
+    if existing_manifest:
+        recorded_baseline = existing_manifest.get("baseline_condition_id")
+        requested_baseline = config["experiment"].get("starting_prompt_id")
+        if recorded_baseline and recorded_baseline != requested_baseline:
+            raise RuntimeError("A run cannot resume with a different baseline condition")
     proposer = args.proposer or existing_manifest.get("proposer") or "deterministic"
     if existing_manifest and existing_manifest.get("proposer", "deterministic") != proposer:
         raise RuntimeError("A run cannot resume with a different proposer")
-    preregistration_path = A1_ROOT / ("deepseek_preregistration.md" if proposer == "deepseek" else "preregistration.md")
+    preregistration_path = (
+        ROOT / "phase-a/a1b-baseline-sensitivity/preregistration.md"
+        if args.experiment == "a1b"
+        else A1_ROOT / ("deepseek_preregistration.md" if proposer == "deepseek" else "preregistration.md")
+    )
     manifest = {
         "run_id": args.run_id,
-        "experiment": "a1-prompt-evolution",
+        "experiment": "a1b-baseline-sensitivity" if args.experiment == "a1b" else "a1-prompt-evolution",
         "proposer": proposer,
+        "baseline_condition_id": config["experiment"].get("starting_prompt_id"),
+        "baseline_prompt_sha256": hashlib.sha256(config["experiment"].get("starting_prompt", "").encode()).hexdigest(),
         "config": config,
         "proposer_config": provider_config if proposer == "deepseek" else None,
         "a0_config_sha256": a0.sha256_file(A0_CONFIG),
-        "a1_config_sha256": a0.sha256_file(A1_CONFIG),
+        "experiment_config_sha256": a0.sha256_file(experiment_config_path),
         "proposer_config_sha256": a0.sha256_file(DEEPSEEK_CONFIG) if proposer == "deepseek" else None,
         "preregistration_sha256": a0.sha256_file(preregistration_path),
         "created_at": utc_now(),

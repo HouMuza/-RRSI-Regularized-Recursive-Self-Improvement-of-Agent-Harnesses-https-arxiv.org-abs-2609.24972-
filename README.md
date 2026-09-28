@@ -18,6 +18,10 @@ owner approves its gate.
 The detailed phase map is in [`docs/RESEARCH_PLAN.md`](docs/RESEARCH_PLAN.md).
 The complete A1 hierarchy, selection process, metrics, and dashboard guide are
 in [`docs/a1_experiment_guide.md`](docs/a1_experiment_guide.md).
+The completed A1 result is in
+[`phase-a/a1-prompt-evolution/results.md`](phase-a/a1-prompt-evolution/results.md).
+The registered baseline sensitivity follow-up is in
+[`phase-a/a1b-baseline-sensitivity/`](phase-a/a1b-baseline-sensitivity/).
 The gate and evidence requirements are in [`docs/EXPERIMENT_GATES.md`](docs/EXPERIMENT_GATES.md).
 The referenced paper and its implications for our design are summarized in
 [`docs/paper_rrsi.md`](docs/paper_rrsi.md).

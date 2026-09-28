@@ -25,6 +25,7 @@ STATIC_ROOT = ROOT / "phase-a/a0-infrastructure/dashboard"
 RUNNER = ROOT / "phase-a/a0-infrastructure/run_a0.py"
 A1_RUNNER = ROOT / "phase-a/a1-prompt-evolution/run_a1.py"
 A1_RUNS_ROOT = ROOT / "runs/a1"
+A1B_RUNS_ROOT = ROOT / "runs/a1b"
 PYTHON = ROOT / ".venv/bin/python"
 DEFAULT_RUN_ID = "a0-20260926-180736"
 CONTROL_PATH = store.CONTROL_PATH
@@ -180,8 +181,12 @@ def a1_snapshot() -> dict[str, Any]:
     """Summarize A1 protocol, candidates, decisions, and comparisons."""
     config = store.read_json(ROOT / "phase-a/a1-prompt-evolution/config.json", {})
     deepseek_config = store.read_json(ROOT / "phase-a/a1-prompt-evolution/deepseek_config.json", {})
-    experiments = A1_RUNS_ROOT / "experiments"
-    run_dirs = sorted((path for path in experiments.glob("a1-*") if path.is_dir()), reverse=True) if experiments.exists() else []
+    experiment_roots = [A1_RUNS_ROOT / "experiments", A1B_RUNS_ROOT / "experiments"]
+    run_dirs = sorted(
+        (path for root in experiment_roots if root.exists() for path in root.iterdir() if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
     runs = []
     for run_dir in run_dirs:
         state = store.read_json(run_dir / "search_state.json", {})
@@ -256,6 +261,8 @@ def a1_snapshot() -> dict[str, Any]:
         runs.append({
             "run_id": run_dir.name,
             "proposer": manifest.get("proposer", state.get("proposer", "deterministic")),
+            "experiment": manifest.get("experiment", "a1-prompt-evolution"),
+            "baseline_condition_id": manifest.get("baseline_condition_id", "current"),
             "state": state,
             "candidates": candidates,
             "decisions": decisions,
@@ -268,6 +275,7 @@ def a1_snapshot() -> dict[str, Any]:
     key_name = str(deepseek_config.get("api_key_environment_variable") or "DEEPSEEK_API_KEY")
     return {
         "config": config,
+        "baseline_conditions": store.read_json(ROOT / "phase-a/a1b-baseline-sensitivity/baselines.json", {}).get("conditions", []),
         "runs": runs,
         "control": reconcile_process(),
         "proposers": {
@@ -290,7 +298,7 @@ def a1_candidate_detail(run_id: str, candidate_id: str, stage: str) -> dict[str,
     resolved beneath the selected experiment directory before it is read.
     Held-out prompt text remains sealed from the development dashboard.
     """
-    experiments_root = (A1_RUNS_ROOT / "experiments").resolve()
+    experiments_root = ((A1B_RUNS_ROOT if run_id.startswith("a1b-") else A1_RUNS_ROOT) / "experiments").resolve()
     run_root = (experiments_root / run_id).resolve()
     candidate_root = (run_root / "candidates" / candidate_id).resolve()
     evaluation_root = (candidate_root / "evaluations" / stage).resolve()
@@ -365,7 +373,12 @@ def a1_candidate_detail(run_id: str, candidate_id: str, stage: str) -> dict[str,
     }
 
 
-def start_a1_runner(run_id: str | None, stage: str, proposer: str | None = None) -> tuple[bool, str, str]:
+def start_a1_runner(
+    run_id: str | None,
+    stage: str,
+    proposer: str | None = None,
+    baseline_id: str | None = None,
+) -> tuple[bool, str, str]:
     """Launch one resumable A1 protocol stage under the shared process guard."""
     global ACTIVE_PROCESS, ACTIVE_LOG
     with PROCESS_LOCK:
@@ -376,10 +389,17 @@ def start_a1_runner(run_id: str | None, stage: str, proposer: str | None = None)
             return False, "The requested A1 stage is invalid.", str(run_id or "")
         if proposer not in {None, "deterministic", "deepseek"}:
             return False, "The requested A1 proposer is invalid.", str(run_id or "")
+        baseline_conditions = store.read_json(ROOT / "phase-a/a1b-baseline-sensitivity/baselines.json", {}).get("conditions", [])
+        registered_baselines = {item.get("id") for item in baseline_conditions}
+        is_a1b = bool(baseline_id and baseline_id != "current")
+        if baseline_id and baseline_id not in registered_baselines:
+            return False, "The requested baseline condition is not registered.", str(run_id or "")
         if not run_id:
-            run_id = datetime.datetime.now().strftime("a1-%Y%m%d-%H%M%S")
-        normalized = run_id.removeprefix("a1-").replace("-", "")
-        if not run_id.startswith("a1-") or not normalized.isdigit():
+            prefix = "a1b" if is_a1b else "a1"
+            run_id = datetime.datetime.now().strftime(f"{prefix}-%Y%m%d-%H%M%S")
+        valid_prefix = "a1b-" if run_id.startswith("a1b-") else "a1-"
+        normalized = run_id.removeprefix(valid_prefix).replace("-", "")
+        if not run_id.startswith(valid_prefix) or not normalized.isdigit():
             return False, "The requested A1 run id is invalid.", run_id
         if not A1_RUNNER.exists() or not PYTHON.exists():
             return False, "The A1 runner or project Python environment is missing.", run_id
@@ -387,8 +407,12 @@ def start_a1_runner(run_id: str | None, stage: str, proposer: str | None = None)
         # The server derives the legal next stage from durable evidence rather
         # than trusting the browser. This keeps validation and held-out data
         # outside candidate selection even when an old tab submits stale data.
-        run_dir = A1_RUNS_ROOT / "experiments" / run_id
+        run_root = A1B_RUNS_ROOT if run_id.startswith("a1b-") else A1_RUNS_ROOT
+        run_dir = run_root / "experiments" / run_id
         manifest = store.read_json(run_dir / "manifest.json", {})
+        if manifest:
+            baseline_id = manifest.get("baseline_condition_id") or baseline_id
+            is_a1b = manifest.get("experiment") == "a1b-baseline-sensitivity"
         proposer = proposer or manifest.get("proposer") or "deterministic"
         if manifest and manifest.get("proposer", "deterministic") != proposer:
             return False, "A run cannot resume with a different proposer.", run_id
@@ -403,11 +427,13 @@ def start_a1_runner(run_id: str | None, stage: str, proposer: str | None = None)
             return False, "Every A1 stage is already complete.", run_id
         stage = expected_stage
 
-        log_dir = A1_RUNS_ROOT / "dashboard"
+        log_dir = run_root / "dashboard"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / f"{run_id}-{stage}-{int(time.time())}.log"
         ACTIVE_LOG = log_path.open("a", encoding="utf-8")
         command = [str(PYTHON), str(A1_RUNNER), "--run-id", run_id, "--stage", stage, "--proposer", proposer]
+        if is_a1b:
+            command.extend(["--experiment", "a1b", "--baseline-id", str(baseline_id)])
         environment = os.environ.copy()
         environment.setdefault("NLTK_DATA", str(store.RUNS_ROOT / "nltk_data"))
         try:
@@ -593,7 +619,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 run_id = str(body.get("run_id") or "") or None
                 stage = str(body.get("stage") or "search")
                 proposer = str(body.get("proposer") or "") or None
-                ok, message, resolved_run_id = start_a1_runner(run_id, stage, proposer)
+                baseline_id = str(body.get("baseline_id") or "") or None
+                ok, message, resolved_run_id = start_a1_runner(run_id, stage, proposer, baseline_id)
                 self.send_json({"ok": ok, "message": message, "run_id": resolved_run_id, "control": reconcile_process()}, 200 if ok else 409)
                 return
             if self.path == "/api/gate":

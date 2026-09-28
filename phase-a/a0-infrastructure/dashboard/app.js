@@ -628,6 +628,11 @@ function renderA1() {
   const config = data.config || {};
   const runs = data.runs || [];
   const run = runs.find(item => item.run_id === state.a1RunId) || runs[0];
+  const isBaselineSensitivity = run?.experiment === "a1b-baseline-sensitivity";
+  title.textContent = isBaselineSensitivity ? "a1b baseline sensitivity" : "a1 prompt evolution";
+  document.getElementById("scope-label").textContent = isBaselineSensitivity
+    ? "phase a / a1b baseline sensitivity"
+    : "phase a / a1 prompt evolution";
   const control = data.control || {};
   const proposerStatus = data.proposers || {};
   const runProposer = run?.proposer || "deterministic";
@@ -636,6 +641,9 @@ function renderA1() {
   const search = config.search || {};
   const stateRecord = run?.state || {};
   const candidates = run?.candidates || [];
+  const baselineConditions = data.baseline_conditions || [];
+  const baselineCandidate = candidates.find(candidate => Number(candidate.generation) === 0);
+  const baselineCandidateId = baselineCandidate?.candidate_id || "a0-baseline";
   const comparisons = run?.comparisons || {};
   // Preserve the most recent candidate evaluation between runner checkpoints.
   // The runner briefly has no active evaluation after one candidate completes
@@ -651,7 +659,7 @@ function renderA1() {
   // number would make the dashboard appear to move backwards during retesting.
   const activeGeneration = Number(activity?.stage?.match(/^g(\d+)/)?.[1] || stateRecord.completed_generations?.length + 1 || 1);
   const candidatePosition = Number(activity?.candidate_id?.match(/c(\d+)$/)?.[1] || 0);
-  const measuringParent = activity?.candidate_id === (stateRecord.incumbent_id || "a0-baseline");
+  const measuringParent = activity?.candidate_id === (stateRecord.incumbent_id || baselineCandidateId);
   const stageLabel = activity?.stage?.includes("confirmation")
     ? "confirmation"
     : activity?.stage?.includes("screen") ? "screening" : activity?.stage?.includes("final") ? "full evaluation" : "evaluation";
@@ -754,7 +762,7 @@ function renderA1() {
     };
   });
   if (stageLabel === "confirmation" && !measuringParent && activity && !decisionsByGeneration.has(activeGeneration)) {
-    const historyParent = candidatesById.get(stateRecord.incumbent_id || "a0-baseline");
+    const historyParent = candidatesById.get(stateRecord.incumbent_id || baselineCandidateId);
     const historyParentEvaluation = (historyParent?.evaluations || []).find(item => item.stage === activity.stage);
     const historyDelta = activity.strict_prompt_accuracy != null && historyParentEvaluation?.strict_prompt_accuracy != null
       ? activity.strict_prompt_accuracy - historyParentEvaluation.strict_prompt_accuracy
@@ -770,7 +778,7 @@ function renderA1() {
     });
   }
   const confirmationCandidates = candidates.flatMap(candidate => (candidate.evaluations || [])
-    .filter(item => item.stage?.includes("confirmation") && candidate.candidate_id !== "a0-baseline")
+    .filter(item => item.stage?.includes("confirmation") && candidate.candidate_id !== baselineCandidateId)
     .map(item => {
       const generation = Number(item.stage.match(/^g(\d+)/)?.[1] || candidate.generation);
       const parent = candidatesById.get(candidate.parent_id);
@@ -788,7 +796,7 @@ function renderA1() {
     : stageLabel === "confirmation"
       ? `finalist ${Math.max(activeConfirmationPosition, 1)} of 2`
       : `candidate ${candidatePosition || 1} of ${search.candidates_per_generation || 4}`;
-  const parentCandidate = candidates.find(candidate => candidate.candidate_id === (stateRecord.incumbent_id || "a0-baseline")) || candidates.find(candidate => candidate.candidate_id === "a0-baseline");
+  const parentCandidate = candidates.find(candidate => candidate.candidate_id === (stateRecord.incumbent_id || baselineCandidateId)) || baselineCandidate;
   const parentEvaluation = [...(parentCandidate?.evaluations || [])].reverse().find(item => item.stage === activity?.stage);
   const latestDecision = completedDecisions.at(-1);
   const currentGenerationDecided = latestDecision?.generation === activeGeneration;
@@ -842,13 +850,13 @@ function renderA1() {
   const selectedStageLabel = selectedStage.replaceAll("_", " ");
   const showSearch = selectedStage === "search";
   const showActiveEvaluation = showSearch ? !finalSplit : finalSplit === selectedStage && evaluationInProgress;
-  const retainedBaseline = stateRecord.winner_id === "a0-baseline";
+  const retainedBaseline = stateRecord.winner_id === baselineCandidateId;
   const selectedFinalStage = selectedStage === "search" ? null : `final-${selectedStage}`;
   const baselineFinalEvaluation = selectedFinalStage
-    ? (candidatesById.get("a0-baseline")?.evaluations || []).find(item => item.stage === selectedFinalStage)
+    ? (candidatesById.get(baselineCandidateId)?.evaluations || []).find(item => item.stage === selectedFinalStage)
     : null;
   const winnerFinalEvaluation = selectedFinalStage
-    ? (candidatesById.get(stateRecord.winner_id || stateRecord.incumbent_id || "a0-baseline")?.evaluations || []).find(item => item.stage === selectedFinalStage)
+    ? (candidatesById.get(stateRecord.winner_id || stateRecord.incumbent_id || baselineCandidateId)?.evaluations || []).find(item => item.stage === selectedFinalStage)
     : null;
   content.innerHTML = `
     ${stateRecord.status === "failed" && !runningThisRun ? `<div class="banner error"><strong>A1 search stopped:</strong> ${escapeHtml(stateRecord.error || "The runner exited before completing the current candidate.")} The saved candidate ledger can be resumed.</div>` : ""}
@@ -856,10 +864,10 @@ function renderA1() {
       <div>
         <p class="eyebrow">run control</p>
         <div class="run-control-title"><h2>${escapeHtml(run?.run_id || "new a1 run")}</h2>${statusBadge(runningThisRun ? "running" : run?.complete ? "complete" : "ready")}</div>
-        <p class="muted">${runProposer === "deepseek" ? `Proposer: deepseek · model: ${escapeHtml(proposerStatus.deepseek?.model || "not configured")} · API key: ${proposerStatus.deepseek?.configured ? "configured" : "not configured"}` : "Proposer: deterministic · fixed mutation bank"}</p>
+        <p class="muted">Starting prompt: ${escapeHtml(run?.baseline_condition_id || "current")} · ${runProposer === "deepseek" ? `Proposer: deepseek · model: ${escapeHtml(proposerStatus.deepseek?.model || "not configured")} · API key: ${proposerStatus.deepseek?.configured ? "configured" : "not configured"}` : "Proposer: deterministic · fixed mutation bank"}</p>
         ${run?.complete ? `<p class="run-complete-note"><strong>This run is finished.</strong> Search, evolution, validation, and heldout evidence are saved. Choose a proposal strategy to create a separate replicate with a new run id.</p>` : ""}
       </div>
-      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label>${runs.length > 1 ? `<button class="button secondary comparison-open" id="a1-compare-runs"><span class="comparison-icon" aria-hidden="true">↗</span> compare ${runs.length} runs</button>` : ""}${run?.complete ? `<label><span>new run strategy</span><select id="a1-new-proposer"><option value="deterministic">deterministic control</option><option value="deepseek" ${proposerStatus.deepseek?.configured ? "" : "disabled"}>deepseek${proposerStatus.deepseek?.configured ? "" : " · key required"}</option></select></label>` : ""}<button class="button ${run?.complete ? "secondary" : "primary"}" id="a1-start" ${anyA1Running ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
+      <div class="run-control-actions"><label><span>view run</span><select id="a1-run-select">${runs.map(item => `<option value="${escapeHtml(item.run_id)}" ${item.run_id === run?.run_id ? "selected" : ""}>${escapeHtml(item.run_id)} · ${escapeHtml(item.baseline_condition_id || "current")} · ${escapeHtml(item.proposer || "deterministic")}</option>`).join("")}</select></label>${runs.length > 1 ? `<button class="button secondary comparison-open" id="a1-compare-runs"><span class="comparison-icon" aria-hidden="true">↗</span> compare ${runs.length} runs</button>` : ""}${run?.complete ? `<label><span>starting prompt</span><select id="a1-new-baseline">${baselineConditions.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === "ordinary" ? "selected" : ""}>${escapeHtml(item.label)}</option>`).join("")}</select></label><label><span>proposal strategy</span><select id="a1-new-proposer"><option value="deterministic">deterministic control</option><option value="deepseek" ${proposerStatus.deepseek?.configured ? "" : "disabled"}>deepseek${proposerStatus.deepseek?.configured ? "" : " · key required"}</option></select></label>` : ""}<button class="button ${run?.complete ? "secondary" : "primary"}" id="a1-start" ${anyA1Running ? "disabled" : ""}>${anyA1Running && !runningThisRun ? "another run is active" : escapeHtml(actionLabel)}</button></div>
     </div>
     <div class="card stage-pipeline" aria-label="Select A1 stage">
       ${pipeline.map((item, index) => { const value = item.label.replace("heldout test", "heldout_test"); return `<div class="pipeline-stage ${item.status} ${selectedStage === value ? "active" : ""}"><button class="stage-select" data-a1-stage="${value}" aria-label="Show ${escapeHtml(item.label)} results"><div class="pipeline-label"><span>${index + 1}</span><strong>${escapeHtml(item.label)}</strong><em>${escapeHtml(item.status)}</em></div><div class="pipeline-track"><span style="width:${Math.min(item.progress, 100)}%"></span></div></button><button class="stage-help" data-stage-help="${value}" aria-label="Explain ${escapeHtml(item.label)} stage">?</button></div>`; }).join("")}
@@ -879,7 +887,7 @@ function renderA1() {
     ${activity && showActiveEvaluation ? `<div class="card a1-live"><div class="card-head"><div><p class="eyebrow">${evaluationInProgress ? `${finalSplit ? finalSplit.replaceAll("_", " ") : "evolution"} is active` : runningThisRun ? "evaluation complete · next comparison starting" : "latest evaluation"}</p><h2>${finalSplit ? `${finalSplit.replaceAll("_", " ")} · ${measuringParent ? "baseline" : "selected prompt"}` : `generation ${activeGeneration} of ${search.generations || 3} · ${stageLabel} ${activeRunLabel}`}</h2></div>${statusBadge(evaluationInProgress ? "running" : activity.status)}</div><p class="a1-live-explanation">${evaluationInProgress ? "Evaluating" : "Last evaluated"} <span class="run-id">${escapeHtml(activity.candidate_id)}</span>. ${stageLabel === "screening" ? "The best two candidates advance to confirmation." : stageLabel === "confirmation" ? "A candidate replaces the incumbent only if it beats the incumbent on the paired confirmation panel." : `This is a frozen ${finalSplit?.replaceAll("_", " ") || "final"} measurement. It cannot select or modify a prompt.`}</p><div class="progress"><span style="width:${Math.min(activity.percent || 0, 100)}%"></span></div><div class="a1-progress-meta"><strong>${activity.completed || 0} / ${activity.total || 0} generated</strong><span>${activity.scored_examples || 0} scored</span><span>${evaluationInProgress ? "live" : "final"} strict estimate ${formatPercent(activity.strict_prompt_accuracy)}</span><span>${(activity.examples_per_second || 0).toFixed(3)} ex/s</span><span>${evaluationInProgress ? `ETA ${formatDuration(activity.eta_seconds)}` : runningThisRun ? "next comparison is still to run" : "evaluation complete"}</span></div></div>` : ""}
     ${activity && showActiveEvaluation ? `<div class="card section"><div class="card-head"><div><h2>live candidate checkpoints</h2><p class="muted">${escapeHtml(activity.candidate_id)} updates as new responses are verified</p></div><span class="live-indicator">${evaluationInProgress ? "● live" : "final"}</span></div>${metricChart(activity.progress_history, ["strict_prompt_accuracy", "strict_instruction_accuracy", "loose_prompt_accuracy"])}<p class="chart-note">Blue is the metric used to select a prompt. Green shows instruction-level accuracy. Orange is the format-tolerant upper bound. These lines can move until the candidate finishes.</p></div>` : ""}
     ${activity && showSearch && stageLabel === "screening" ? `<div class="card section generation-screen"><div class="card-head"><div><h2>generation ${activeGeneration} screening results</h2><p class="muted">completed candidates stay visible while the remaining candidates run</p></div><span class="muted">${generationCandidates.filter(record => record.evaluation?.status === "complete").length} of ${search.candidates_per_generation || 4} final</span></div>${generationScreenChart(generationCandidates, parentEvaluation?.strict_prompt_accuracy, activity.candidate_id)}<div class="screen-legend"><span class="final">final screen score</span><span class="live">live partial score</span><span class="parent">parent score to beat</span></div><p class="chart-note">Candidate 1 remains here with its final 32 example result. Orange is the candidate currently being scored. The two highest final scores advance only after all four screens finish.</p></div>` : ""}
-    ${activity && showSearch ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>improvement across generations</h2><span class="muted">solid points are final · orange is live</span></div>${generationProgressChart(generationHistory, generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}<div class="generation-history"><div class="history-row history-head"><span>stage</span><span>candidate</span><span>score</span><span>parent</span><span>change</span><span>decision</span></div><div class="history-row"><strong>baseline</strong><span class="run-id">a0-baseline</span><strong>${formatPercent(generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}</strong><span>reference</span><span>0.0 pp</span><span>starting prompt</span></div>${generationHistory.map(item => `<div class="history-row ${item.provisional ? "provisional" : ""}"><strong>generation ${item.generation}</strong><span class="run-id">${escapeHtml(item.candidateId)}</span><strong>${formatPercent(item.candidateScore)}</strong><span>${formatPercent(item.parentScore)}</span><span class="${item.delta > 0 ? "metric-positive" : item.delta < 0 ? "metric-negative" : "metric-neutral"}">${item.delta == null ? "too early" : signedPercent(item.delta)}${item.provisional ? " partial" : ""}</span><span>${escapeHtml(item.outcome)}</span></div>`).join("")}</div><p class="chart-note">A point above the dashed baseline is an improvement. A point below it is a regression. The live point can move until all 96 examples are scored.</p></div><div class="card"><div class="card-head"><h2>all confirmation runs</h2><span class="muted">every finalist, across every generation</span></div><table><thead><tr><th>generation</th><th>candidate</th><th>evidence</th><th>score</th><th>versus parent</th></tr></thead><tbody>${confirmationCandidates.map(record => `<tr class="drilldown-row" data-a1-candidate="${escapeHtml(record.candidate.candidate_id)}" data-a1-stage="${escapeHtml(record.item.stage)}"><td>${record.generation}</td><td><span class="run-id">${escapeHtml(record.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(record.candidate.rationale || "Prompt revision")}</small></td><td>${record.item.scored_examples || record.item.completed || 0}/${record.item.total || 0}${record.item.status === "complete" ? " final" : " partial"}</td><td>${formatPercent(record.item.strict_prompt_accuracy)}</td><td class="${record.delta > 0 ? "metric-positive" : record.delta < 0 ? "metric-negative" : "metric-neutral"}">${record.delta == null ? "pending" : signedPercent(record.delta)}${record.item.status === "complete" ? "" : " partial"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${activity && showSearch ? `<div class="grid two section"><div class="card"><div class="card-head"><h2>improvement across generations</h2><span class="muted">solid points are final · orange is live</span></div>${generationProgressChart(generationHistory, generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}<div class="generation-history"><div class="history-row history-head"><span>stage</span><span>candidate</span><span>score</span><span>parent</span><span>change</span><span>decision</span></div><div class="history-row"><strong>baseline</strong><span class="run-id">${escapeHtml(baselineCandidateId)}</span><strong>${formatPercent(generationHistory[0]?.parentScore || parentEvaluation?.strict_prompt_accuracy)}</strong><span>reference</span><span>0.0 pp</span><span>starting prompt</span></div>${generationHistory.map(item => `<div class="history-row ${item.provisional ? "provisional" : ""}"><strong>generation ${item.generation}</strong><span class="run-id">${escapeHtml(item.candidateId)}</span><strong>${formatPercent(item.candidateScore)}</strong><span>${formatPercent(item.parentScore)}</span><span class="${item.delta > 0 ? "metric-positive" : item.delta < 0 ? "metric-negative" : "metric-neutral"}">${item.delta == null ? "too early" : signedPercent(item.delta)}${item.provisional ? " partial" : ""}</span><span>${escapeHtml(item.outcome)}</span></div>`).join("")}</div><p class="chart-note">A point above the dashed baseline is an improvement. A point below it is a regression. The live point can move until all 96 examples are scored.</p></div><div class="card"><div class="card-head"><h2>all confirmation runs</h2><span class="muted">every finalist, across every generation</span></div><table><thead><tr><th>generation</th><th>candidate</th><th>evidence</th><th>score</th><th>versus parent</th></tr></thead><tbody>${confirmationCandidates.map(record => `<tr class="drilldown-row" data-a1-candidate="${escapeHtml(record.candidate.candidate_id)}" data-a1-stage="${escapeHtml(record.item.stage)}"><td>${record.generation}</td><td><span class="run-id">${escapeHtml(record.candidate.candidate_id)}</span><small class="table-subline">${escapeHtml(record.candidate.rationale || "Prompt revision")}</small></td><td>${record.item.scored_examples || record.item.completed || 0}/${record.item.total || 0}${record.item.status === "complete" ? " final" : " partial"}</td><td>${formatPercent(record.item.strict_prompt_accuracy)}</td><td class="${record.delta > 0 ? "metric-positive" : record.delta < 0 ? "metric-negative" : "metric-neutral"}">${record.delta == null ? "pending" : signedPercent(record.delta)}${record.item.status === "complete" ? "" : " partial"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
     <div class="${showSearch ? "" : "hidden"}">
     <div class="card section">
         <div class="card-head"><div><p class="eyebrow">prompt-only recursive improvement</p><h2>a1 evolution protocol</h2></div>${statusBadge(run?.complete ? "complete" : runningThisRun ? "running" : run ? stateRecord.status || "ready" : "ready")}</div>
@@ -890,7 +898,7 @@ function renderA1() {
           <div>screen panel</div><div>${escapeHtml(search.screen_examples || 0)} evolution examples</div>
           <div>confirmation panel</div><div>${escapeHtml(search.confirmation_examples || 0)} evolution examples</div>
           <div>acceptance rule</div><div>positive paired confirmation delta</div>
-          <div>current incumbent</div><div class="run-id">${escapeHtml(stateRecord.incumbent_id || "a0-baseline")} ${runningThisRun && !(stateRecord.completed_generations || []).length ? "· unchanged until confirmation" : ""}</div>
+          <div>current incumbent</div><div class="run-id">${escapeHtml(stateRecord.incumbent_id || baselineCandidateId)} ${runningThisRun && !(stateRecord.completed_generations || []).length ? "· unchanged until confirmation" : ""}</div>
         </div>
     </div>
     <div class="grid kpis section">${comparisonCards}</div>
@@ -912,7 +920,8 @@ function renderA1() {
     try {
       const useExistingRun = run && !run.complete;
       const newRunProposer = document.getElementById("a1-new-proposer")?.value || "deterministic";
-      const result = await api("/api/a1/start", {method:"POST", body:JSON.stringify({run_id:useExistingRun ? run.run_id : null, stage:useExistingRun ? nextStage : "search", proposer:useExistingRun ? runProposer : newRunProposer})});
+      const newBaselineId = document.getElementById("a1-new-baseline")?.value || run?.baseline_condition_id || "current";
+      const result = await api("/api/a1/start", {method:"POST", body:JSON.stringify({run_id:useExistingRun ? run.run_id : null, stage:useExistingRun ? nextStage : "search", proposer:useExistingRun ? runProposer : newRunProposer, baseline_id:newBaselineId})});
       showBanner(result.message);
       // Every new strategy replicate begins in Search. Move the URL and visible
       // stage there so proposal and scoring progress appears immediately.

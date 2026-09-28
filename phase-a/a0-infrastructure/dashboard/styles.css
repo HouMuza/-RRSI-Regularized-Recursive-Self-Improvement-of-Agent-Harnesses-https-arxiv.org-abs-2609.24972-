@@ -97,9 +97,12 @@ h3 { font-size: 14px; }
 .run-complete-note strong { color: #116b47; }
 .run-control-title { display: flex; align-items: center; gap: 12px; }
 .run-control-title h2 { margin-bottom: 4px; }
-.run-control-actions { display: flex; align-items: end; gap: 10px; }
+.run-control-actions { display: flex; align-items: end; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
 .run-control-actions label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
-.run-control-actions select { min-width: 290px; }
+.run-control-actions select { min-width: 210px; max-width: 290px; }
+.run-control-actions label:first-child select { min-width: 250px; }
+.run-control-actions .button { white-space: nowrap; }
+.run-control-top > div:first-child { flex: 1 1 310px; }
 .run-history { margin-bottom: 14px; }
 .run-history-grid { display: grid; }
 .run-history-row { display: grid; grid-template-columns: minmax(190px, 1.5fr) 100px 90px 85px 80px 80px 80px; gap: 12px; align-items: center; padding: 11px 10px; border: 0; border-bottom: 1px solid var(--line-soft); background: transparent; color: inherit; text-align: left; font: inherit; }
